@@ -10,7 +10,8 @@ FROM golang:1.24-alpine AS builder
 RUN apk add --no-cache gcc musl-dev linux-headers git
 
 RUN git config --global url."https://x-access-token:${ACCESS_TOKEN}@github.com".insteadOf "https://github.com"
-RUN echo ${ACCESS_TOKEN}
+RUN echo "machine github.com login x-access-token password ${ACCESS_TOKEN}" > $HOME/.netrc && \
+    chmod 0600 $HOME/.netrc
 
 # Get dependencies - will also be cached if we won't change go.mod/go.sum
 COPY go.mod /go-ethereum/

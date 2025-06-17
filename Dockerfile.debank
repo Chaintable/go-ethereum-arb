@@ -2,10 +2,11 @@
 ARG COMMIT=""
 ARG VERSION=""
 ARG BUILDNUM=""
-ARG ACCESS_TOKEN
 
 # Build Geth in a stock Go builder container
 FROM golang:1.24-alpine AS builder
+
+ARG ACCESS_TOKEN
 
 RUN apk add --no-cache gcc musl-dev linux-headers git
 

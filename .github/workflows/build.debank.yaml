@@ -33,7 +33,6 @@ jobs:
 
       - name: Set env
         run: |
-          echo "ARCHIVE_FILE_NAME=bor-$(git rev-parse --short=7 HEAD)-linux-${{ matrix.arch }}" >> $GITHUB_ENV
           echo "REVISION=$(git rev-parse --short=7 HEAD)" >> $GITHUB_ENV
 
       - name: Configure AWS Credentials

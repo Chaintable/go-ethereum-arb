@@ -34,7 +34,6 @@ jobs:
       - name: Set env
         run: |
           echo "REVISION=$(git rev-parse --short=7 HEAD)" >> $GITHUB_ENV
-          echo "${{ steps.generate-token.outputs.token }}"
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1

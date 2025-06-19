@@ -22,7 +22,6 @@ func NewPipelineTracer(cfg json.RawMessage) (*tracing.Hooks, error) {
 	if err != nil {
 		return nil, err
 	}
-	tracer.BlockCtx = new(tracer.ExtraInfo)
 	return &tracing.Hooks{
 		OnBlockchainInit: t.OnBlockchainInit,
 		OnClose:          t.OnClose,

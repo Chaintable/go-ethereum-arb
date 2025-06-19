@@ -502,9 +502,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 			if err != nil {
 				return nil, fmt.Errorf("failed to get genesis state: %w", err)
 			}
-			if alloc == nil {
-				return nil, errors.New("live blockchain tracer requires genesis alloc to be set")
-			}
 			bc.logger.OnGenesisBlock(bc.genesisBlock, alloc)
 		}
 	}

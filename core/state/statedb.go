@@ -43,6 +43,8 @@ import (
 	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/holiman/uint256"
 	"golang.org/x/sync/errgroup"
+
+	ptypes "github.com/Chaintable/pipeline/types"
 )
 
 // TriesInMemory represents the number of layers that are kept in RAM.
@@ -164,7 +166,8 @@ type StateDB struct {
 	deterministic bool
 	recording     bool
 
-	OnCommit tracing.CommitHook
+	OnCommit  tracing.CommitHook
+	stateDiff *ptypes.BlockStorageDiff
 }
 
 // New creates a new state from a given trie.
@@ -1469,6 +1472,7 @@ func (s *StateDB) commitAndFlush(block uint64, deleteEmptyObjects bool, noStorag
 				ret.storagesOrigin,
 				contracts,
 			)
+			s.stateDiff = ret.GetStateDiff()
 		}
 
 		// If trie database is enabled, commit the state update as a new layer
@@ -1618,4 +1622,8 @@ func (s *StateDB) AccessEvents() *AccessEvents {
 
 func (s *StateDB) SetOnCommitLogger(logger tracing.CommitHook) {
 	s.OnCommit = logger
+}
+
+func (s *StateDB) StateDiff() *ptypes.BlockStorageDiff {
+	return s.stateDiff
 }

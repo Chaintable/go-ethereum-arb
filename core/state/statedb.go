@@ -43,8 +43,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/holiman/uint256"
 	"golang.org/x/sync/errgroup"
-
-	ptypes "github.com/Chaintable/pipeline/types"
 )
 
 // TriesInMemory represents the number of layers that are kept in RAM.

@@ -166,8 +166,7 @@ type StateDB struct {
 	deterministic bool
 	recording     bool
 
-	OnCommit  tracing.CommitHook
-	stateDiff *ptypes.BlockStorageDiff
+	OnCommit tracing.CommitHook
 }
 
 // New creates a new state from a given trie.
@@ -1472,7 +1471,6 @@ func (s *StateDB) commitAndFlush(block uint64, deleteEmptyObjects bool, noStorag
 				ret.storagesOrigin,
 				contracts,
 			)
-			s.stateDiff = ret.GetStateDiff()
 		}
 
 		// If trie database is enabled, commit the state update as a new layer
@@ -1622,8 +1620,4 @@ func (s *StateDB) AccessEvents() *AccessEvents {
 
 func (s *StateDB) SetOnCommitLogger(logger tracing.CommitHook) {
 	s.OnCommit = logger
-}
-
-func (s *StateDB) StateDiff() *ptypes.BlockStorageDiff {
-	return s.stateDiff
 }

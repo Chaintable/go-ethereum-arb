@@ -31,6 +31,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
+
+	ptypes "github.com/Chaintable/pipeline/types"
 )
 
 // OpContext provides the context at which the opcode is being
@@ -196,7 +198,8 @@ type (
 	CaptureStylusHostioHook = func(name string, args, outs []byte, startInk, endInk uint64)
 
 	// CommitHook is called when the state is committed.
-	CommitHook = func(originRoot common.Hash, root common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, accountsOrigin map[common.Address][]byte, storages map[common.Hash]map[common.Hash][]byte, storagesOrigin map[common.Address]map[common.Hash][]byte, codes map[common.Hash][]byte)
+	CommitHook          = func(originRoot common.Hash, root common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, accountsOrigin map[common.Address][]byte, storages map[common.Hash]map[common.Hash][]byte, storagesOrigin map[common.Address]map[common.Hash][]byte, codes map[common.Hash][]byte)
+	ArbGenesisBlockHook = func(genesis *types.Block, blockDiff *ptypes.BlockStorageDiff)
 )
 
 type Hooks struct {
@@ -234,9 +237,10 @@ type Hooks struct {
 	CaptureArbitrumStorageSet CaptureArbitrumStorageSetHook
 	// Stylus: capture hostio invocation
 	CaptureStylusHostio CaptureStylusHostioHook
-	
+
 	// custom hook
-	OnCommit CommitHook
+	OnCommit          CommitHook
+	OnArbGenesisBlock ArbGenesisBlockHook
 }
 
 // BalanceChangeReason is used to indicate the reason for a balance change, useful

@@ -496,13 +496,29 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	if bc.logger != nil && bc.logger.OnBlockchainInit != nil {
 		bc.logger.OnBlockchainInit(chainConfig)
 	}
-	if bc.logger != nil && bc.logger.OnGenesisBlock != nil {
-		if block := bc.CurrentBlock(); block.Number.Uint64() == 0 {
-			alloc, err := getGenesisState(bc.db, block.Hash())
-			if err != nil {
-				return nil, fmt.Errorf("failed to get genesis state: %w", err)
+	if !chainConfig.IsArbitrum() {
+		if bc.logger != nil && bc.logger.OnGenesisBlock != nil {
+			if block := bc.CurrentBlock(); block.Number.Uint64() == 0 {
+				alloc, err := getGenesisState(bc.db, block.Hash())
+				if err != nil {
+					return nil, fmt.Errorf("failed to get genesis state: %w", err)
+				}
+				if alloc == nil {
+					return nil, errors.New("live blockchain tracer requires genesis alloc to be set")
+				}
+				bc.logger.OnGenesisBlock(bc.genesisBlock, alloc)
 			}
-			bc.logger.OnGenesisBlock(bc.genesisBlock, alloc)
+		}
+	} else {
+		if bc.logger != nil && bc.logger.OnArbGenesisBlock != nil {
+			if block := bc.CurrentBlock(); block.Number.Uint64() == chainConfig.ArbitrumChainParams.GenesisBlockNum {
+				stateDb, err := bc.StateAt(block.Root)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get genesis state: %w", err)
+				}
+				stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
+				bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
+			}
 		}
 	}
 

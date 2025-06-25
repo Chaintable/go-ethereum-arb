@@ -54,6 +54,9 @@ import (
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
+
+	"github.com/Chaintable/pipeline/tracer"
+	ptypes "github.com/Chaintable/pipeline/types"
 )
 
 var (
@@ -489,19 +492,34 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	// it in advance.
 	bc.engine.VerifyHeader(bc, bc.CurrentHeader())
 
+	log.Info("Initialised blockchain", "head", bc.CurrentHeader().Number, "hash", bc.CurrentHeader().Hash())
 	if bc.logger != nil && bc.logger.OnBlockchainInit != nil {
 		bc.logger.OnBlockchainInit(chainConfig)
 	}
-	if bc.logger != nil && bc.logger.OnGenesisBlock != nil {
-		if block := bc.CurrentBlock(); block.Number.Uint64() == 0 {
-			alloc, err := getGenesisState(bc.db, block.Hash())
-			if err != nil {
-				return nil, fmt.Errorf("failed to get genesis state: %w", err)
+	if !chainConfig.IsArbitrum() {
+		if bc.logger != nil && bc.logger.OnGenesisBlock != nil {
+			if block := bc.CurrentBlock(); block.Number.Uint64() == 0 {
+				alloc, err := getGenesisState(bc.db, block.Hash())
+				if err != nil {
+					return nil, fmt.Errorf("failed to get genesis state: %w", err)
+				}
+				if alloc == nil {
+					return nil, errors.New("live blockchain tracer requires genesis alloc to be set")
+				}
+				bc.logger.OnGenesisBlock(bc.genesisBlock, alloc)
 			}
-			if alloc == nil {
-				return nil, errors.New("live blockchain tracer requires genesis alloc to be set")
+		}
+	} else {
+		if bc.logger != nil && bc.logger.OnArbGenesisBlock != nil {
+			if block := bc.CurrentBlock(); block.Number.Uint64() == chainConfig.ArbitrumChainParams.GenesisBlockNum {
+				stateDb, err := bc.StateAt(block.Root)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get genesis state: %w", err)
+				}
+				stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
+				log.Info("Arbitrum genesis state diff", "diff", stateDiff)
+				bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
 			}
-			bc.logger.OnGenesisBlock(bc.genesisBlock, alloc)
 		}
 	}
 
@@ -1527,6 +1545,64 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	return 0, nil
 }
 
+// 返回两个块的共同祖先，以及两个块的从共同祖先到两个块的路径,即drop和new
+func (bc *BlockChain) getCommonAncestor(blocka ptypes.BlockContext, blockb ptypes.BlockContext) (ptypes.BlockContext, []ptypes.BlockContext, []ptypes.BlockContext) {
+	var (
+		chainA, chainB []ptypes.BlockContext
+	)
+	if blockb.ParentHash == blocka.Hash {
+		return blocka, chainA, []ptypes.BlockContext{blockb}
+	}
+	for blockb.BlockNumber > blocka.BlockNumber {
+		chainB = append(chainB, blockb)
+		headerb := bc.GetHeaderByHash(blockb.ParentHash)
+		if headerb == nil {
+			log.Crit("Failed to get header by hash", "hash", blockb.ParentHash)
+		} else {
+			blockb = ptypes.BlockContext{
+				BlockNumber: headerb.Number.Uint64(),
+				Hash:        headerb.Hash(),
+				ParentHash:  headerb.ParentHash,
+				Timestamp:   headerb.Time,
+			}
+		}
+	}
+	for blocka.Hash != blockb.Hash {
+		chainA = append(chainA, blocka)
+		headera := bc.GetHeaderByHash(blocka.ParentHash)
+		if headera == nil {
+			log.Crit("Failed to get header by hash", "hash", blocka.ParentHash)
+		} else {
+			blocka = ptypes.BlockContext{
+				BlockNumber: headera.Number.Uint64(),
+				Hash:        headera.Hash(),
+				ParentHash:  headera.ParentHash,
+				Timestamp:   headera.Time,
+			}
+		}
+
+		chainB = append(chainB, blockb)
+		headerb := bc.GetHeaderByHash(blockb.ParentHash)
+		if headerb == nil {
+			log.Crit("Failed to get header by hash", "hash", blockb.ParentHash)
+		} else {
+			blockb = ptypes.BlockContext{
+				BlockNumber: headerb.Number.Uint64(),
+				Hash:        headerb.Hash(),
+				ParentHash:  headerb.ParentHash,
+				Timestamp:   headerb.Time,
+			}
+		}
+	}
+	// now blocka == blockb == ancestor
+
+	// reverse chainA
+	slices.Reverse(chainA)
+	// reverse chainB
+	slices.Reverse(chainB)
+	return blocka, chainA, chainB
+}
+
 // writeBlockWithoutState writes only the block and its metadata to the database,
 // but does not write any state. This is used to construct competing side forks
 // up to the point where they exceed the canonical total difficulty.
@@ -1697,6 +1773,8 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 
 	// Set new head.
 	bc.writeHeadBlock(block)
+
+	bc.pushBlockChange(block)
 
 	bc.chainFeed.Send(ChainEvent{Header: block.Header()})
 	if len(logs) > 0 {
@@ -2540,6 +2618,8 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 	}
 	bc.writeHeadBlock(head)
 
+	bc.pushBlockChange(head)
+
 	// Emit events
 	logs := bc.collectLogs(head, false)
 	bc.chainFeed.Send(ChainEvent{Header: head.Header()})
@@ -2675,4 +2755,47 @@ func (bc *BlockChain) SetTrieFlushInterval(interval time.Duration) {
 // GetTrieFlushInterval gets the in-memory tries flushAlloc interval
 func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 	return time.Duration(bc.flushInterval.Load())
+}
+
+// pushBlockChange push block change to kafka, support debank union nodes
+func (bc *BlockChain) pushBlockChange(block *types.Block) {
+	// 先确保 pipeline tracer 不为空，然后再判断是否需要push kafka
+	// 上一个push kafka的block, 必然存在(至少有genesis block)
+	// 上一个push kafka的block比当前的head block还要新，说明有unwind回退，不需要处理, 即使是fork，等有更新的block的时候再一起push
+	if tracer.NodeXPusher != nil && tracer.NodeXPusher.LastPushedBlock().BlockNumber <= block.NumberU64() {
+		lastPushBlock := tracer.NodeXPusher.LastPushedBlock()
+		_, dropBlocks, newBlocks := bc.getCommonAncestor(*lastPushBlock, ptypes.BlockContext{
+			BlockNumber: block.NumberU64(),
+			Hash:        block.Hash(),
+			ParentHash:  block.ParentHash(),
+			Timestamp:   block.Time(),
+		})
+		var blockChange *ptypes.BlockChangeNotification
+		if len(dropBlocks) > 0 {
+			blockChange = &ptypes.BlockChangeNotification{
+				ChangeType: 2,
+				NewBlocks:  newBlocks,
+				DropBlocks: dropBlocks,
+			}
+		} else if len(newBlocks) > 0 {
+			blockChange = &ptypes.BlockChangeNotification{
+				ChangeType: 1,
+				NewBlocks:  newBlocks,
+			}
+		}
+
+		parent := bc.GetHeaderByHash(block.Header().ParentHash)
+
+		if parent.Root == block.Root() {
+			bc.logger.OnCommit(parent.Root, block.Root(), nil, nil, nil, nil, nil, nil)
+		}
+
+		if blockChange != nil {
+			err := tracer.NodeXPusher.PushBlockChangeNotification(blockChange)
+			if err != nil {
+				log.Error("SetCanonical PushBlockChangeNotification error", "err", err)
+			}
+			log.Info("NodeXPusher PushBlockChangeNotification", "blockChange", blockChange)
+		}
+	}
 }

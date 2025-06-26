@@ -698,3 +698,18 @@ func decodePrealloc(data string) types.GenesisAlloc {
 	}
 	return ga
 }
+
+func dumpGenesisAlloc(stateDb *state.StateDB) *state.Alloc {
+	opts := &state.DumpConfig{
+		SkipCode:          false,
+		SkipStorage:       false,
+		OnlyWithAddresses: false,
+		Start:             nil,
+		Max:               1024,
+	}
+	genesisAlloc := &state.Alloc{
+		Accounts: make(map[common.Hash]state.DumpAccount),
+	}
+	stateDb.DumpToCollector(genesisAlloc, opts)
+	return genesisAlloc
+}

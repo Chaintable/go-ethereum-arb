@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	ptypes "github.com/Chaintable/pipeline/types"
 	"maps"
 	"math/big"
 	"slices"
@@ -30,6 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	ptypes "github.com/Chaintable/pipeline/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"

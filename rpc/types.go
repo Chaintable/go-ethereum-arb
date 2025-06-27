@@ -26,6 +26,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+
+	ptypes "github.com/Chaintable/pipeline/types"
 )
 
 // API describes the set of methods offered over the RPC interface
@@ -250,4 +252,18 @@ func BlockNumberOrHashWithHash(hash common.Hash, canonical bool) BlockNumberOrHa
 		BlockHash:        &hash,
 		RequireCanonical: canonical,
 	}
+}
+
+type DebankOutPut struct {
+	BlockFile      *ptypes.BlockFile        `json:"block_file"`
+	Header         *ptypes.Header           `json:"header"`
+	StateDiff      *ptypes.BlockStorageDiff `json:"state_diff"`
+	ValidationHash int64                    `json:"validation_hash"`
+}
+
+type DebankOutPutJs struct {
+	BlockFile      *ptypes.BlockFile `json:"block_file"`
+	Header         *ptypes.Header    `json:"header"`
+	StateDiff      []byte            `json:"state_diff"`
+	ValidationHash int64             `json:"validation_hash"`
 }

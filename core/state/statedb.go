@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	ptypes "github.com/Chaintable/pipeline/types"
 	"maps"
 	"math/big"
 	"slices"
@@ -1627,4 +1628,13 @@ func (s *StateDB) AccessEvents() *AccessEvents {
 
 func (s *StateDB) SetOnCommitLogger(logger tracing.CommitHook) {
 	s.OnCommit = logger
+}
+
+func (s *StateDB) GetStateDiff() (*ptypes.BlockStorageDiff, error) {
+	stateDb := s.Copy()
+	ret, err := stateDb.commit(true, false)
+	if err != nil {
+		return nil, err
+	}
+	return ret.GetStateDiff(), nil
 }

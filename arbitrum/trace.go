@@ -1,4 +1,4 @@
-package eth
+package arbitrum
 
 import (
 	"context"
@@ -19,16 +19,16 @@ import (
 )
 
 type PublicTraceAPI struct {
-	e *Ethereum
+	backend *APIBackend
 }
 
 // NewPublicTraceAPI creates a new trace API.
-func NewPublicTraceAPI(e *Ethereum) *PublicTraceAPI {
-	return &PublicTraceAPI{e: e}
+func NewPublicTraceAPI(backend *APIBackend) *PublicTraceAPI {
+	return &PublicTraceAPI{backend: backend}
 }
 
 func (api *PublicTraceAPI) DebankBlockRaw(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*rpc.DebankOutPut, error) {
-	block, err := api.e.APIBackend.BlockByNumberOrHash(ctx, blockNrOrHash)
+	block, err := api.backend.BlockByNumberOrHash(ctx, blockNrOrHash)
 	if err != nil {
 		return nil, err
 	}
@@ -41,8 +41,8 @@ func (api *PublicTraceAPI) DebankBlockRaw(ctx context.Context, blockNrOrHash rpc
 		ErrorTraces:      make([]ptypes.Trace, 0),
 		StorageContracts: make([]string, 0),
 	}
-	if block.Number().Uint64() == api.e.BlockChain().Config().ArbitrumChainParams.GenesisBlockNum {
-		stateDb, err := api.e.BlockChain().StateAt(block.Root())
+	if block.Number().Uint64() == api.backend.ChainConfig().ArbitrumChainParams.GenesisBlockNum {
+		stateDb, err := api.backend.BlockChain().StateAt(block.Root())
 		if err != nil {
 			return nil, fmt.Errorf("failed to load genesis state database: %w", err)
 		}
@@ -61,32 +61,32 @@ func (api *PublicTraceAPI) DebankBlockRaw(ctx context.Context, blockNrOrHash rpc
 			ValidationHash: blockFile.Validation().ValidationHash,
 		}, nil
 	}
-	parent, err := api.e.APIBackend.BlockByHash(ctx, block.ParentHash())
+	parent, err := api.backend.BlockByHash(ctx, block.ParentHash())
 	if err != nil {
 		return nil, err
 	}
-	statedb, release, err := api.e.APIBackend.StateAtBlock(ctx, parent, 0, nil, true, false)
+	statedb, release, err := api.backend.StateAtBlock(ctx, parent, 0, nil, true, false)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	blockCtx := core.NewEVMBlockContext(block.Header(), ethapi.NewChainContext(ctx, api.e.APIBackend), nil)
-	evm := vm.NewEVM(blockCtx, statedb, api.e.APIBackend.ChainConfig(), vm.Config{})
+	blockCtx := core.NewEVMBlockContext(block.Header(), ethapi.NewChainContext(ctx, api.backend), nil)
+	evm := vm.NewEVM(blockCtx, statedb, api.backend.ChainConfig(), vm.Config{})
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
 		core.ProcessBeaconBlockRoot(*beaconRoot, evm)
 	}
-	if !api.e.APIBackend.ChainConfig().IsArbitrum() && api.e.APIBackend.ChainConfig().IsPrague(block.Number(), block.Time(), blockCtx.ArbOSVersion) {
+	if !api.backend.ChainConfig().IsArbitrum() && api.backend.ChainConfig().IsPrague(block.Number(), block.Time(), blockCtx.ArbOSVersion) {
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 	var (
 		txs          = block.Transactions()
 		arbosVersion = types.DeserializeHeaderExtraInformation(block.Header()).ArbOSFormatVersion
-		signer       = types.MakeSigner(api.e.APIBackend.ChainConfig(), block.Number(), block.Time(), arbosVersion)
+		signer       = types.MakeSigner(api.backend.ChainConfig(), block.Number(), block.Time(), arbosVersion)
 	)
 
 	for i, tx := range txs {
 		tracer := native.NewDebankCallTracer(blockFile, tx.Hash().Hex())
-		evm = api.e.APIBackend.GetEVM(ctx, statedb, parent.Header(), &vm.Config{NoBaseFee: true, Tracer: tracer}, &blockCtx)
+		evm = api.backend.GetEVM(ctx, statedb, parent.Header(), &vm.Config{NoBaseFee: true, Tracer: tracer}, &blockCtx)
 		// Generate the next state snapshot fast without tracing
 		_, err = core.TransactionToMessage(tx, signer, block.BaseFee(), core.MessageReplayMode)
 		if err != nil {

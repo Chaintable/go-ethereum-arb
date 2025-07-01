@@ -338,10 +338,6 @@ func (s *Ethereum) APIs() []rpc.API {
 			Namespace: "net",
 			Service:   s.netRPCService,
 		},
-		{
-			Namespace: "trace",
-			Service:   NewPublicTraceAPI(s),
-		},
 	}...)
 }
 

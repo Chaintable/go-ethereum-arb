@@ -425,8 +425,8 @@ var (
 		"getAddressBalance": "debank_getAddressBalance",
 		"getAddressCode":    "debank_getAddressCode",
 		"getStorageAt":      "debank_getStorageAt",
-		"contractMultiCall": "debank_getContractMultiCall",
-		"estimateGas":       "debank_getEstimateGas",
+		"contractMultiCall": "debank_contractMultiCall",
+		"estimateGas":       "debank_estimateGas",
 	}
 )
 

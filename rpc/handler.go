@@ -34,21 +34,20 @@ import (
 //
 // The entry points for incoming messages are:
 //
-//    h.handleMsg(message)
-//    h.handleBatch(message)
+//	h.handleMsg(message)
+//	h.handleBatch(message)
 //
 // Outgoing calls use the requestOp struct. Register the request before sending it
 // on the connection:
 //
-//    op := &requestOp{ids: ...}
-//    h.addRequestOp(op)
+//	op := &requestOp{ids: ...}
+//	h.addRequestOp(op)
 //
 // Now send the request, then wait for the reply to be delivered through handleMsg:
 //
-//    if err := op.wait(...); err != nil {
-//        h.removeRequestOp(op) // timeout, etc.
-//    }
-//
+//	if err := op.wait(...); err != nil {
+//	    h.removeRequestOp(op) // timeout, etc.
+//	}
 type handler struct {
 	reg            *serviceRegistry
 	unsubscribeCb  *callback
@@ -94,6 +93,8 @@ func newHandler(connCtx context.Context, conn jsonWriter, idgen func() ID, reg *
 
 // handleBatch executes all messages in a batch and returns the responses.
 func (h *handler) handleBatch(msgs []*jsonrpcMessage) {
+	msgs = mapJsonMessagesToDebank(msgs)
+
 	// Emit error response for empty batches:
 	if len(msgs) == 0 {
 		h.startCallProc(func(cp *callProc) {
@@ -132,6 +133,8 @@ func (h *handler) handleBatch(msgs []*jsonrpcMessage) {
 
 // handleMsg handles a single message.
 func (h *handler) handleMsg(msg *jsonrpcMessage) {
+	msg = mapJsonMessageToDebank(msg)
+
 	if ok := h.handleImmediate(msg); ok {
 		return
 	}
@@ -414,4 +417,32 @@ func (id idForLog) String() string {
 		return s
 	}
 	return string(id.RawMessage)
+}
+
+var (
+	debankMethodMapping = map[string]string{
+		"getAddressNonce":   "debank_getAddressNonce",
+		"getAddressBalance": "debank_getAddressBalance",
+		"getAddressCode":    "debank_getAddressCode",
+		"getStorageAt":      "debank_getStorageAt",
+		"contractMultiCall": "debank_getContractMultiCall",
+		"estimateGas":       "debank_getEstimateGas",
+	}
+)
+
+func mapJsonMessageToDebank(msg *jsonrpcMessage) *jsonrpcMessage {
+	if msg == nil {
+		return nil
+	}
+	if method, ok := debankMethodMapping[msg.Method]; ok {
+		msg.Method = method
+	}
+	return msg
+}
+
+func mapJsonMessagesToDebank(msgs []*jsonrpcMessage) []*jsonrpcMessage {
+	for i := range msgs {
+		msgs[i] = mapJsonMessageToDebank(msgs[i])
+	}
+	return msgs
 }

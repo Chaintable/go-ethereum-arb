@@ -517,7 +517,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 					return nil, fmt.Errorf("failed to get genesis state: %w", err)
 				}
 				stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
-				log.Info("Arbitrum genesis state diff", "diff", stateDiff)
 				bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
 			}
 		}

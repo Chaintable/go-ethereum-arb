@@ -511,13 +511,25 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		}
 	} else {
 		if bc.logger != nil && bc.logger.OnArbGenesisBlock != nil {
-			if block := bc.CurrentBlock(); block.Number.Uint64() == chainConfig.ArbitrumChainParams.GenesisBlockNum {
-				stateDb, err := bc.StateAt(block.Root)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get genesis state: %w", err)
+			// arb mainnet
+			if chainConfig.ChainID.Uint64() == 42161 {
+				if block := bc.CurrentBlock(); block.Number.Uint64() == 22207817 {
+					stateDb, err := bc.StateAt(block.Root)
+					if err != nil {
+						return nil, fmt.Errorf("failed to get genesis state: %w", err)
+					}
+					stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
+					bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
 				}
-				stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
-				bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
+			} else {
+				if block := bc.CurrentBlock(); block.Number.Uint64() == chainConfig.ArbitrumChainParams.GenesisBlockNum {
+					stateDb, err := bc.StateAt(block.Root)
+					if err != nil {
+						return nil, fmt.Errorf("failed to get genesis state: %w", err)
+					}
+					stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
+					bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
+				}
 			}
 		}
 	}

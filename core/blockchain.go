@@ -518,6 +518,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 					if err != nil {
 						return nil, fmt.Errorf("failed to get genesis state: %w", err)
 					}
+					log.Info("OnArbGenesisBlock", "number", block.Number)
 					stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
 					bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
 				}
@@ -527,6 +528,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 					if err != nil {
 						return nil, fmt.Errorf("failed to get genesis state: %w", err)
 					}
+					log.Info("OnArbGenesisBlock", "number", block.Number)
 					stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
 					bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
 				}

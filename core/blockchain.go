@@ -520,7 +520,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 					}
 					log.Info("OnArbGenesisBlock", "number", block.Number)
 					stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
-					bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
+					bc.logger.OnArbGenesisBlock(bc.GetBlockByNumber(block.Number.Uint64()), stateDiff)
 				}
 			} else {
 				if block := bc.CurrentBlock(); block.Number.Uint64() == chainConfig.ArbitrumChainParams.GenesisBlockNum {

@@ -9,11 +9,23 @@ func (obj *StateAccount) EncodeRLP(_w io.Writer) error {
 	w := rlp.NewEncoderBuffer(_w)
 	_tmp0 := w.List()
 	w.WriteUint64(obj.Nonce)
-	if obj.Balance == nil {
+	w.WriteUint64(uint64(obj.Flags))
+	if obj.Fixed == nil {
 		w.Write(rlp.EmptyString)
 	} else {
-		w.WriteUint256(obj.Balance)
+		w.WriteUint256(obj.Fixed)
 	}
+	if obj.Shares == nil {
+		w.Write(rlp.EmptyString)
+	} else {
+		w.WriteUint256(obj.Shares)
+	}
+	if obj.Debt == nil {
+		w.Write(rlp.EmptyString)
+	} else {
+		w.WriteUint256(obj.Debt)
+	}
+	w.WriteBytes(obj.Delegate[:])
 	w.WriteBytes(obj.Root[:])
 	w.WriteBytes(obj.CodeHash)
 	w.ListEnd(_tmp0)

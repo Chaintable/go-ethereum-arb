@@ -26,11 +26,21 @@ import (
 
 //go:generate go run ../../rlp/rlpgen -type StateAccount -out gen_account_rlp.go
 
+const (
+	YieldAutomatic = iota
+	YieldDisabled
+	YieldDelegated
+)
+
 // StateAccount is the Ethereum consensus representation of accounts.
 // These objects are stored in the main account trie.
 type StateAccount struct {
 	Nonce    uint64
-	Balance  *uint256.Int
+	Flags    uint8
+	Fixed    *uint256.Int
+	Shares   *uint256.Int
+	Debt     *uint256.Int
+	Delegate common.Address
 	Root     common.Hash // merkle root of the storage trie
 	CodeHash []byte
 }
@@ -38,7 +48,9 @@ type StateAccount struct {
 // NewEmptyStateAccount constructs an empty state account.
 func NewEmptyStateAccount() *StateAccount {
 	return &StateAccount{
-		Balance:  new(uint256.Int),
+		Fixed:    new(uint256.Int),
+		Shares:   new(uint256.Int),
+		Debt:     new(uint256.Int),
 		Root:     EmptyRootHash,
 		CodeHash: EmptyCodeHash.Bytes(),
 	}
@@ -46,13 +58,25 @@ func NewEmptyStateAccount() *StateAccount {
 
 // Copy returns a deep-copied state account object.
 func (acct *StateAccount) Copy() *StateAccount {
-	var balance *uint256.Int
-	if acct.Balance != nil {
-		balance = new(uint256.Int).Set(acct.Balance)
+	var fixed *uint256.Int
+	var shares *uint256.Int
+	var debt *uint256.Int
+	if acct.Fixed != nil {
+		fixed = acct.Fixed.Clone()
+	}
+	if acct.Shares != nil {
+		shares = acct.Shares.Clone()
+	}
+	if acct.Debt != nil {
+		debt = acct.Debt.Clone()
 	}
 	return &StateAccount{
 		Nonce:    acct.Nonce,
-		Balance:  balance,
+		Flags:    acct.Flags,
+		Fixed:    fixed,
+		Shares:   shares,
+		Debt:     debt,
+		Delegate: acct.Delegate,
 		Root:     acct.Root,
 		CodeHash: common.CopyBytes(acct.CodeHash),
 	}
@@ -63,7 +87,11 @@ func (acct *StateAccount) Copy() *StateAccount {
 // or slim format which replaces the empty root and code hash as nil byte slice.
 type SlimAccount struct {
 	Nonce    uint64
-	Balance  *uint256.Int
+	Flags    uint8
+	Fixed    *uint256.Int
+	Shares   *uint256.Int
+	Debt     *uint256.Int
+	Delegate common.Address
 	Root     []byte // Nil if root equals to types.EmptyRootHash
 	CodeHash []byte // Nil if hash equals to types.EmptyCodeHash
 }
@@ -71,8 +99,12 @@ type SlimAccount struct {
 // SlimAccountRLP encodes the state account in 'slim RLP' format.
 func SlimAccountRLP(account StateAccount) []byte {
 	slim := SlimAccount{
-		Nonce:   account.Nonce,
-		Balance: account.Balance,
+		Nonce:    account.Nonce,
+		Flags:    account.Flags,
+		Fixed:    account.Fixed,
+		Shares:   account.Shares,
+		Debt:     account.Debt,
+		Delegate: account.Delegate,
 	}
 	if account.Root != EmptyRootHash {
 		slim.Root = account.Root[:]
@@ -95,7 +127,7 @@ func FullAccount(data []byte) (*StateAccount, error) {
 		return nil, err
 	}
 	var account StateAccount
-	account.Nonce, account.Balance = slim.Nonce, slim.Balance
+	account.Nonce, account.Flags, account.Fixed, account.Shares, account.Debt, account.Delegate = slim.Nonce, slim.Flags, slim.Fixed, slim.Shares, slim.Debt, slim.Delegate
 
 	// Interpret the storage root and code hash in slim format.
 	if len(slim.Root) == 0 {

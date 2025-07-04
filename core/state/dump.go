@@ -49,7 +49,11 @@ type DumpCollector interface {
 
 // DumpAccount represents an account in the state.
 type DumpAccount struct {
-	Balance     string                 `json:"balance"`
+	Flags       uint8                  `json:"flags"`
+	Fixed       string                 `json:"fixed"`
+	Shares      string                 `json:"shares"`
+	Debt        string                 `json:"debt"`
+	Delegate    string                 `json:"delegate"`
 	Nonce       uint64                 `json:"nonce"`
 	Root        hexutil.Bytes          `json:"root"`
 	CodeHash    hexutil.Bytes          `json:"codeHash"`
@@ -91,7 +95,11 @@ type iterativeDump struct {
 // OnAccount implements DumpCollector interface
 func (d iterativeDump) OnAccount(addr *common.Address, account DumpAccount) {
 	dumpAccount := &DumpAccount{
-		Balance:     account.Balance,
+		Flags:       account.Flags,
+		Fixed:       account.Fixed,
+		Shares:      account.Shares,
+		Debt:        account.Debt,
+		Delegate:    account.Delegate,
 		Nonce:       account.Nonce,
 		Root:        account.Root,
 		CodeHash:    account.CodeHash,
@@ -139,7 +147,11 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		}
 		var (
 			account = DumpAccount{
-				Balance:     data.Balance.String(),
+				Flags:       data.Flags,
+				Fixed:       data.Fixed.String(),
+				Shares:      data.Shares.String(),
+				Debt:        data.Debt.String(),
+				Delegate:    data.Delegate.String(),
 				Nonce:       data.Nonce,
 				Root:        data.Root[:],
 				CodeHash:    data.CodeHash,

@@ -29,7 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/ethereum/go-ethereum/triedb"
 )
 
@@ -228,7 +227,7 @@ func (db *cachingDB) WasmTargets() []ethdb.WasmTarget {
 // OpenTrie opens the main account trie at a specific root hash.
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 	if db.triedb.IsVerkle() {
-		return trie.NewVerkleTrie(root, db.triedb, utils.NewPointCache(commitmentCacheItems))
+		panic("verkle tree unsupported")
 	}
 	tr, err := trie.NewStateTrie(trie.StateTrieID(root), db.triedb)
 	if err != nil {
@@ -256,8 +255,6 @@ func (db *cachingDB) OpenStorageTrie(stateRoot common.Hash, address common.Addre
 func (db *cachingDB) CopyTrie(t Trie) Trie {
 	switch t := t.(type) {
 	case *trie.StateTrie:
-		return t.Copy()
-	case *trie.VerkleTrie:
 		return t.Copy()
 	default:
 		panic(fmt.Errorf("unknown trie type %T", t))

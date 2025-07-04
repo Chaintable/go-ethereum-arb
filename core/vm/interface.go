@@ -64,6 +64,11 @@ type StateDB interface {
 	GetBalance(common.Address) *uint256.Int
 	ExpectBalanceBurn(*big.Int)
 
+	GetFlags(common.Address) uint8
+	SetFlags(common.Address, uint8, *common.Address)
+
+	GetBalanceValues(addr common.Address) *state.BalanceValues
+
 	GetNonce(common.Address) uint64
 	SetNonce(common.Address, uint64)
 

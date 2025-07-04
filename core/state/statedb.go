@@ -433,6 +433,85 @@ func (s *StateDB) HasSelfDestructed(addr common.Address) bool {
 	return false
 }
 
+type BalanceValues struct {
+	Flags    uint8
+	Fixed    *uint256.Int
+	Shares   *uint256.Int
+	Debt     *uint256.Int
+	Delegate common.Address
+}
+
+// GetBalanceValues retrieves the balance values from the given address or 0 if object not found
+func (s *StateDB) GetBalanceValues(addr common.Address) *BalanceValues {
+	stateObject := s.getStateObject(addr)
+
+	if stateObject == nil {
+		return &BalanceValues{
+			Flags:    0,
+			Fixed:    new(uint256.Int),
+			Shares:   new(uint256.Int),
+			Debt:     new(uint256.Int),
+			Delegate: common.Address{},
+		}
+	}
+
+	return &BalanceValues{
+		Flags:    stateObject.data.Flags,
+		Fixed:    stateObject.data.Fixed,
+		Shares:   stateObject.data.Shares,
+		Debt:     stateObject.data.Debt,
+		Delegate: stateObject.data.Delegate,
+	}
+}
+
+func mapAddress(slot *big.Int) common.Hash {
+	key := common.BigToHash(slot)
+	keyBytes := key.Bytes()
+	boundary := common.HashLength - 1
+	mapped := make([]byte, 0, common.HashLength)
+	mapped = append(mapped, crypto.Keccak256(keyBytes[:boundary])[:boundary]...)
+	mapped = append(mapped, keyBytes[boundary])
+	return common.BytesToHash(mapped)
+}
+
+var (
+	sharePriceSlot = mapAddress(big.NewInt(50))
+	shareCountSlot = mapAddress(big.NewInt(51))
+)
+
+func (s *StateDB) GetSharePrice() uint64 {
+	return s.GetState(types.ArbosStateAddress, sharePriceSlot).Big().Uint64()
+}
+
+func (s *StateDB) adjustShareCount(pre, post *uint256.Int) {
+	if pre.Cmp(post) == 0 {
+		return
+	}
+
+	shareCount := uint256.MustFromBig(s.GetState(types.ArbosStateAddress, shareCountSlot).Big())
+	shareCount.Add(shareCount, post)
+	shareCount.Sub(shareCount, pre)
+
+	s.SetState(types.ArbosStateAddress, shareCountSlot, common.BigToHash(shareCount.ToBig()))
+}
+
+// OpenArbosState
+
+func (s *StateDB) GetFlags(addr common.Address) uint8 {
+	stateObject := s.getStateObject(addr)
+	if stateObject != nil {
+		return stateObject.Flags()
+	}
+	return 0
+}
+
+func (s *StateDB) SetFlags(addr common.Address, flags uint8, delegate *common.Address) {
+	stateObject := s.getOrNewStateObject(addr)
+	if stateObject != nil {
+		stateObject.SetFlags(flags, delegate)
+	}
+}
+
 /*
  * SETTERS
  */
@@ -532,17 +611,16 @@ func (s *StateDB) SelfDestruct(addr common.Address) {
 		n    = new(uint256.Int)
 	)
 	s.journal.append(selfDestructChange{
-		account:     &addr,
-		prev:        stateObject.selfDestructed,
-		prevbalance: prev,
+		account: &addr,
+		prev:    stateObject.selfDestructed,
 	})
 
 	if s.logger != nil && s.logger.OnBalanceChange != nil && prev.Sign() > 0 {
 		s.logger.OnBalanceChange(addr, prev.ToBig(), n.ToBig(), tracing.BalanceDecreaseSelfdestruct)
 	}
 	stateObject.markSelfdestructed()
-	s.arbExtraData.unexpectedBalanceDelta.Sub(s.arbExtraData.unexpectedBalanceDelta, stateObject.data.Balance.ToBig())
-	stateObject.data.Balance = n
+	s.arbExtraData.unexpectedBalanceDelta.Sub(s.arbExtraData.unexpectedBalanceDelta, stateObject.Balance().ToBig())
+	stateObject.SetFlags(types.YieldDisabled, nil)
 }
 
 func (s *StateDB) Selfdestruct6780(addr common.Address) {
@@ -652,7 +730,11 @@ func (s *StateDB) getStateObject(addr common.Address) *stateObject {
 			}
 			data = &types.StateAccount{
 				Nonce:    acc.Nonce,
-				Balance:  acc.Balance,
+				Flags:    acc.Flags,
+				Fixed:    acc.Fixed,
+				Shares:   acc.Shares,
+				Debt:     acc.Debt,
+				Delegate: acc.Delegate,
 				CodeHash: acc.CodeHash,
 				Root:     common.BytesToHash(acc.Root),
 			}

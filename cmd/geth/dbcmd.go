@@ -41,6 +41,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/holiman/uint256"
 	"github.com/olekukonko/tablewriter"
 	"github.com/urfave/cli/v2"
 )
@@ -820,7 +821,19 @@ func inspectAccount(db *triedb.Database, start uint64, end uint64, address commo
 				if len(account.Root) > 0 {
 					root = fmt.Sprintf("%#x", account.Root)
 				}
-				content = fmt.Sprintf("nonce: %d, balance: %d, codeHash: %s, root: %s", account.Nonce, account.Balance, code, root)
+				//content = fmt.Sprintf("nonce: %d, balance: %d, codeHash: %s, root: %s", account.Nonce, account.Balance, code, root)
+
+				balance := new(uint256.Int)
+				if account.Flags == types.YieldAutomatic {
+					//balance = s.computeShareValue(s.db.GetSharePrice())
+				} else {
+					balance = account.Fixed.Clone()
+				}
+				if balance.Cmp(account.Debt) < 0 {
+					panic("negative balance not allowed")
+				}
+
+				content = fmt.Sprintf("nonce: %d, balance: %d, codeHash: %s, root: %s", account.Nonce, balance.Sub(balance, account.Debt), code, root)
 			}
 		}
 		fmt.Printf("#%d - #%d: %s\n", from, stats.Blocks[i], content)

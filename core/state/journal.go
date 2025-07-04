@@ -136,15 +136,28 @@ type (
 	}
 
 	selfDestructChange struct {
-		account     *common.Address
-		prev        bool // whether account had already self-destructed
-		prevbalance *uint256.Int
+		account *common.Address
+		prev    bool // whether account had already self-destructed
 	}
 
 	// Changes to individual accounts.
 	balanceChange struct {
-		account *common.Address
-		prev    *uint256.Int
+		account    *common.Address
+		prevFixed  *uint256.Int
+		prevShares *uint256.Int
+	}
+	debtChange struct {
+		account    *common.Address
+		prevFixed  *uint256.Int
+		prevShares *uint256.Int
+		prevDebt   *uint256.Int
+	}
+	flagChange struct {
+		account      *common.Address
+		prevFlags    uint8
+		prevFixed    *uint256.Int
+		prevShares   *uint256.Int
+		prevDelegate common.Address
 	}
 	nonceChange struct {
 		account *common.Address
@@ -222,7 +235,6 @@ func (ch selfDestructChange) revert(s *StateDB) {
 	obj := s.getStateObject(*ch.account)
 	if obj != nil {
 		obj.selfDestructed = ch.prev
-		obj.setBalance(ch.prevbalance)
 	}
 }
 
@@ -232,9 +244,8 @@ func (ch selfDestructChange) dirtied() *common.Address {
 
 func (ch selfDestructChange) copy() journalEntry {
 	return selfDestructChange{
-		account:     ch.account,
-		prev:        ch.prev,
-		prevbalance: new(uint256.Int).Set(ch.prevbalance),
+		account: ch.account,
+		prev:    ch.prev,
 	}
 }
 
@@ -254,7 +265,51 @@ func (ch touchChange) copy() journalEntry {
 }
 
 func (ch balanceChange) revert(s *StateDB) {
-	s.getStateObject(*ch.account).setBalance(ch.prev)
+	st := &s.getStateObject(*ch.account).data
+	st.Fixed = ch.prevFixed
+	st.Shares = ch.prevShares
+}
+
+func (ch debtChange) dirtied() *common.Address {
+	return ch.account
+}
+
+func (ch debtChange) copy() journalEntry {
+	return debtChange{
+		account:    ch.account,
+		prevFixed:  new(uint256.Int).Set(ch.prevFixed),
+		prevShares: new(uint256.Int).Set(ch.prevShares),
+		prevDebt:   new(uint256.Int).Set(ch.prevDebt),
+	}
+}
+
+func (ch debtChange) revert(s *StateDB) {
+	st := &s.getStateObject(*ch.account).data
+	st.Fixed = ch.prevFixed
+	st.Shares = ch.prevShares
+	st.Debt = ch.prevDebt
+}
+
+func (ch flagChange) dirtied() *common.Address {
+	return ch.account
+}
+
+func (ch flagChange) copy() journalEntry {
+	return flagChange{
+		account:      ch.account,
+		prevFlags:    ch.prevFlags,
+		prevFixed:    new(uint256.Int).Set(ch.prevFixed),
+		prevShares:   new(uint256.Int).Set(ch.prevShares),
+		prevDelegate: ch.prevDelegate,
+	}
+}
+
+func (ch flagChange) revert(s *StateDB) {
+	st := &s.getStateObject(*ch.account).data
+	st.Flags = ch.prevFlags
+	st.Fixed = ch.prevFixed
+	st.Shares = ch.prevShares
+	st.Delegate = ch.prevDelegate
 }
 
 func (ch balanceChange) dirtied() *common.Address {
@@ -263,8 +318,9 @@ func (ch balanceChange) dirtied() *common.Address {
 
 func (ch balanceChange) copy() journalEntry {
 	return balanceChange{
-		account: ch.account,
-		prev:    new(uint256.Int).Set(ch.prev),
+		account:    ch.account,
+		prevFixed:  new(uint256.Int).Set(ch.prevFixed),
+		prevShares: new(uint256.Int).Set(ch.prevShares),
 	}
 }
 

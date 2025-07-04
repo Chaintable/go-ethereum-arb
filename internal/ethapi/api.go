@@ -666,6 +666,46 @@ func (s *BlockChainAPI) GetBalance(ctx context.Context, address common.Address, 
 	return (*hexutil.Big)(b), state.Error()
 }
 
+type BalanceValuesResult struct {
+	Flags      hexutil.Uint64 `json:"flags"`
+	Fixed      *hexutil.U256  `json:"fixed"`
+	Shares     *hexutil.U256  `json:"shares"`
+	Debt       *hexutil.U256  `json:"debt"`
+	Delegate   common.Address `json:"delegate"`
+	SharePrice uint64         `json:"sharePrice"`
+	Balance    *hexutil.U256  `json:"balance"`
+}
+
+func (s *BlockChainAPI) GetBalanceValues(ctx context.Context, address common.Address, blockNrOrHash rpc.BlockNumberOrHash) (*BalanceValuesResult, error) {
+	state, _, err := s.b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+	if state == nil || err != nil {
+		return nil, err
+	}
+
+	values := state.GetBalanceValues(address)
+
+	result := &BalanceValuesResult{
+		Flags:      hexutil.Uint64(values.Flags),
+		Fixed:      (*hexutil.U256)(values.Fixed),
+		Shares:     (*hexutil.U256)(values.Shares),
+		Debt:       (*hexutil.U256)(values.Debt),
+		Delegate:   values.Delegate,
+		SharePrice: state.GetSharePrice(),
+		Balance:    (*hexutil.U256)(state.GetBalance(address)),
+	}
+
+	return result, state.Error()
+}
+
+func (s *BlockChainAPI) GetSharePrice(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (uint64, error) {
+	state, _, err := s.b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+	if state == nil || err != nil {
+		return 0, err
+	}
+
+	return state.GetSharePrice(), state.Error()
+}
+
 // AccountResult structs for GetProof
 type AccountResult struct {
 	Address      common.Address  `json:"address"`

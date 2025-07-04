@@ -205,7 +205,7 @@ func (t *PipelineTracer) OnArbGenesisBlock(block *types.Block, blockDiff *ptypes
 		},
 	}
 
-	err = tracer.NodeXPusher.PushBlockChangeNotification(blockChanges)
+	err = pushBlockChangeNotification(tracer.NodeXPusher, blockChanges)
 	if err != nil {
 		log.Crit("Failed to push block change notification", "err", err)
 	}
@@ -270,5 +270,79 @@ func uploadblockFileValidation(blockFile *ptypes.BlockFile) error {
 	if err != nil {
 		return fmt.Errorf("failed to upload block file validation: %v", err)
 	}
+	return nil
+}
+
+// copy from tracer.NodeXPusher.PushBlockChangeNotification but don't check genesis block number
+func pushBlockChangeNotification(p *processor.PushProcessor, blockNotice *ptypes.BlockChangeNotification) error {
+	if p.IsBackup {
+		// 如果是备份模式，直接返回
+		log.Info("backup mode, skip push block change notification\n")
+		return nil
+	}
+	if len(blockNotice.NewBlocks) > 1 {
+		// 1. 首先检查 newBlocks 是否满足我们想要的严格顺序和父子关系
+		valid := true
+		for i := 0; i < len(blockNotice.NewBlocks)-1; i++ {
+			current := blockNotice.NewBlocks[i]
+			next := blockNotice.NewBlocks[i+1]
+
+			// 2. 检查区块高度是否递增
+			if current.BlockNumber+1 != next.BlockNumber {
+				valid = false
+				log.Info("block number not in strict order", "current", current.BlockNumber, "next", next.BlockNumber)
+				break
+			}
+
+			// 3. 检查当前区块的哈希是否匹配下一个区块的父哈希
+			if current.Hash != next.ParentHash {
+				valid = false
+				log.Info("parent hash not match", "current hash", current.Hash, "next hash", next.ParentHash)
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("new blocks not in strict order or parent-child relationship")
+		}
+	}
+
+	// don't check genesis block
+	//if p.LastPushedBlock() == nil && blockNotice.NewBlocks[0].BlockNumber != 0 {
+	//	return fmt.Errorf("last pushed block is empty but new block number is not 0")
+	//}
+
+	if p.LastPushedBlock() != nil &&
+		(p.LastPushedBlock().BlockNumber >= blockNotice.NewBlocks[len(blockNotice.NewBlocks)-1].BlockNumber) {
+		return nil
+	}
+
+	if p.LastPushedBlock() != nil {
+		if blockNotice.ChangeType == 1 {
+			if p.LastPushedBlock().Hash != blockNotice.NewBlocks[0].ParentHash {
+				return fmt.Errorf("last pushed block hash is not equal to new block parent hash")
+			}
+		}
+		if blockNotice.ChangeType == 2 {
+			if p.LastPushedBlock().Hash != blockNotice.DropBlocks[len(blockNotice.DropBlocks)-1].Hash {
+				return fmt.Errorf("last pushed block hash is not equal to drop block hash")
+			}
+		}
+	}
+
+	start := time.Now()
+	defer func() {
+		metrics.BlockPushTimer.UpdateSince(start)
+
+	}()
+	// 将区块变更通知写入Kafka
+	err := util.WriteBlockNotice(p.KafkaWriter, blockNotice)
+	if err != nil {
+		return fmt.Errorf("写入区块变更通知到Kafka失败: %v", err)
+	}
+
+	// 更新最新的区块通知
+	p.LastBlockNotice = blockNotice
+	metrics.LatestBlockNumber.Update(int64(blockNotice.NewBlocks[len(blockNotice.NewBlocks)-1].BlockNumber))
+	metrics.LatestBlockTime.Update(int64(blockNotice.NewBlocks[len(blockNotice.NewBlocks)-1].Timestamp))
 	return nil
 }

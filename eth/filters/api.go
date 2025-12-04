@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -37,15 +38,19 @@ var (
 	errInvalidTopic           = errors.New("invalid topic(s)")
 	errFilterNotFound         = errors.New("filter not found")
 	errInvalidBlockRange      = errors.New("invalid block range params")
+	errUnknownBlock           = errors.New("unknown block")
+	errBlockHashWithRange     = errors.New("can't specify fromBlock/toBlock with blockHash")
 	errPendingLogsUnsupported = errors.New("pending logs are not supported")
 	errExceedMaxTopics        = errors.New("exceed max topics")
+	errExceedLogQueryLimit    = errors.New("exceed max addresses or topics per search position")
 )
 
-// The maximum number of topic criteria allowed, vm.LOG4 - vm.LOG0
-const maxTopics = 4
-
-// The maximum number of allowed topics within a topic criteria
-const maxSubTopics = 1000
+const (
+	// The maximum number of topic criteria allowed, vm.LOG4 - vm.LOG0
+	maxTopics = 4
+	// The maximum number of allowed topics within a topic criteria
+	maxSubTopics = 1000
+)
 
 // filter is a helper struct that holds meta information over the filter type
 // and associated subscription in the event system.
@@ -63,20 +68,22 @@ type filter struct {
 // FilterAPI offers support to create and manage filters. This will allow external clients to retrieve various
 // information related to the Ethereum protocol such as blocks, transactions and logs.
 type FilterAPI struct {
-	sys       *FilterSystem
-	events    *EventSystem
-	filtersMu sync.Mutex
-	filters   map[rpc.ID]*filter
-	timeout   time.Duration
+	sys           *FilterSystem
+	events        *EventSystem
+	filtersMu     sync.Mutex
+	filters       map[rpc.ID]*filter
+	timeout       time.Duration
+	logQueryLimit int
 }
 
 // NewFilterAPI returns a new FilterAPI instance.
 func NewFilterAPI(system *FilterSystem) *FilterAPI {
 	api := &FilterAPI{
-		sys:     system,
-		events:  NewEventSystem(system),
-		filters: make(map[rpc.ID]*filter),
-		timeout: system.cfg.Timeout,
+		sys:           system,
+		events:        NewEventSystem(system),
+		filters:       make(map[rpc.ID]*filter),
+		timeout:       system.cfg.Timeout,
+		logQueryLimit: system.cfg.LogQueryLimit,
 	}
 	go api.timeoutLoop(system.cfg.Timeout)
 
@@ -340,8 +347,23 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 	if len(crit.Topics) > maxTopics {
 		return nil, errExceedMaxTopics
 	}
+	if api.logQueryLimit != 0 {
+		if len(crit.Addresses) > api.logQueryLimit {
+			return nil, errExceedLogQueryLimit
+		}
+		for _, topics := range crit.Topics {
+			if len(topics) > api.logQueryLimit {
+				return nil, errExceedLogQueryLimit
+			}
+		}
+	}
+
 	var filter *Filter
 	if crit.BlockHash != nil {
+		if crit.FromBlock != nil || crit.ToBlock != nil {
+			return nil, errBlockHashWithRange
+		}
+
 		// Block filter requested, construct a single-shot filter
 		filter = api.sys.NewBlockFilter(*crit.BlockHash, crit.Addresses, crit.Topics)
 	} else {
@@ -354,12 +376,17 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 		if crit.ToBlock != nil {
 			end = crit.ToBlock.Int64()
 		}
+		// Block numbers below 0 are special cases.
 		if begin > 0 && end > 0 && begin > end {
 			return nil, errInvalidBlockRange
+		}
+		if begin >= 0 && begin < int64(api.events.backend.HistoryPruningCutoff()) {
+			return nil, &history.PrunedHistoryError{}
 		}
 		// Construct the range filter
 		filter = api.sys.NewRangeFilter(begin, end, crit.Addresses, crit.Topics)
 	}
+
 	// Run the filter and return all the logs
 	logs, err := filter.Logs(ctx)
 	if err != nil {

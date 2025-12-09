@@ -747,6 +747,7 @@ func dumpGenesisAlloc(stateDb *state.StateDB) *state.Alloc {
 		OnlyWithAddresses: false,
 		Start:             nil,
 		Max:               0,
+		UseStorageKeyHash: true,
 	}
 	genesisAlloc := &state.Alloc{
 		Accounts: make(map[common.Hash]state.DumpAccount),

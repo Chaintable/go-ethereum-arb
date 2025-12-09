@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -39,6 +40,10 @@ type RecordingKV struct {
 
 func newRecordingKV(inner *triedb.Database, diskDb ethdb.KeyValueStore) *RecordingKV {
 	return &RecordingKV{inner, diskDb, make(map[common.Hash][]byte), sync.Mutex{}, false}
+}
+
+func (db *RecordingKV) SyncKeyValue() error {
+	return nil // recording KV doesn't support SyncKeyValue
 }
 
 func (db *RecordingKV) Has(key []byte) (bool, error) {
@@ -266,7 +271,7 @@ func (r *RecordingDatabase) PrepareRecording(ctx context.Context, lastBlockHeade
 	defer func() { r.Dereference(finalDereference) }()
 	recordingKeyValue := newRecordingKV(r.db.TrieDB(), r.db.DiskDB())
 
-	recordingStateDatabase := state.NewDatabase(triedb.NewDatabase(rawdb.WrapDatabaseWithWasm(rawdb.NewDatabase(recordingKeyValue), r.db.WasmStore(), 0, r.db.WasmTargets()), nil), nil)
+	recordingStateDatabase := state.NewDatabase(triedb.NewDatabase(rawdb.WrapDatabaseWithWasm(rawdb.NewDatabase(recordingKeyValue), r.db.WasmStore()), nil), nil)
 	var prevRoot common.Hash
 	if lastBlockHeader != nil {
 		prevRoot = lastBlockHeader.Root
@@ -330,7 +335,7 @@ func (r *RecordingDatabase) GetOrRecreateState(ctx context.Context, header *type
 	returnedBlockNumber := header.Number.Uint64()
 	for ctx.Err() == nil {
 		var block *types.Block
-		state, block, err = AdvanceStateByBlock(ctx, r.bc, state, blockToRecreate, prevHash, logFunc)
+		state, block, _, err = AdvanceStateByBlock(ctx, r.bc, state, blockToRecreate, prevHash, logFunc, vm.Config{})
 		if err != nil {
 			return nil, err
 		}

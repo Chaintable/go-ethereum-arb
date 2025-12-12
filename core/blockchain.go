@@ -587,7 +587,7 @@ func NewBlockChain(db ethdb.Database, chainConfig *params.ChainConfig, genesis *
 				if err != nil {
 					return nil, fmt.Errorf("failed to get genesis state: %w", err)
 				}
-				stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff()
+				stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff(true)
 				bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
 			}
 		}

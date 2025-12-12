@@ -41,6 +41,7 @@ type DumpConfig struct {
 	OnlyWithAddresses bool
 	Start             []byte
 	Max               uint64
+	UseStorageKeyHash bool
 }
 
 // DumpCollector interface which the state trie calls during iteration
@@ -195,11 +196,15 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 					log.Error("Failed to decode the value returned by iterator", "error", err)
 					continue
 				}
-				key := storageTr.GetKey(storageIt.Key)
-				if key == nil {
-					continue
+				if conf.UseStorageKeyHash {
+					account.Storage[common.BytesToHash(storageIt.Key)] = common.Bytes2Hex(content)
+				} else {
+					key := storageTr.GetKey(storageIt.Key)
+					if key == nil {
+						continue
+					}
+					account.Storage[common.BytesToHash(key)] = common.Bytes2Hex(content)
 				}
-				account.Storage[common.BytesToHash(key)] = common.Bytes2Hex(content)
 			}
 		}
 		c.OnAccount(address, account)
@@ -266,7 +271,7 @@ func (a *Alloc) OnAccount(addr *common.Address, account DumpAccount) {
 	}
 }
 
-func (a *Alloc) ToStorageDiff() *ptypes.BlockStorageDiff {
+func (a *Alloc) ToStorageDiff(UseStorageKeyHash bool) *ptypes.BlockStorageDiff {
 	diff := &ptypes.BlockStorageDiff{
 		Hash:            a.Root,
 		ParentHash:      types.EmptyRootHash,
@@ -292,8 +297,14 @@ func (a *Alloc) ToStorageDiff() *ptypes.BlockStorageDiff {
 		for index, storageValue := range acc.Storage {
 			v := common.HexToHash(storageValue)
 			value := uint256.NewInt(0).SetBytes(v.Bytes())
+			var hashedIndex common.Hash
+			if UseStorageKeyHash {
+				hashedIndex = common.BytesToHash(index[:])
+			} else {
+				hashedIndex = crypto.Keccak256Hash(index[:])
+			}
 			values = append(values, ptypes.IndexValuePair{
-				Index: crypto.Keccak256Hash(index[:]),
+				Index: hashedIndex,
 				Value: value,
 			})
 		}

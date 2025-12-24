@@ -174,10 +174,8 @@ type StateDB struct {
 	AccountDeleted int
 	StorageDeleted int
 
-	// Testing hooks
-	onCommit func(states *triestate.Set) // Hook invoked when commit is performed
-
 	deterministic bool
+	OnCommit      tracing.CommitHook
 }
 
 // New creates a new state from a given trie.
@@ -222,6 +220,9 @@ func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) 
 // SetLogger sets the logger for account update hooks.
 func (s *StateDB) SetLogger(l *tracing.Hooks) {
 	s.logger = l
+	if l != nil && l.OnCommit != nil {
+		s.SetOnCommitLogger(l.OnCommit)
+	}
 }
 
 // StartPrefetcher initializes a new trie prefetcher to pull in nodes from the
@@ -1403,8 +1404,38 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 		s.originalRoot = root
 		s.TrieDBCommits += time.Since(start)
 
-		if s.onCommit != nil {
-			s.onCommit(set)
+		if s.OnCommit != nil {
+			// Collect contract codes from dirty stateObjects
+			contracts := make(map[common.Hash][]byte)
+			for addr, op := range s.mutations {
+				if op.isDelete() {
+					continue
+				}
+				obj := s.stateObjects[addr]
+				if obj.code != nil {
+					contracts[common.BytesToHash(obj.CodeHash())] = obj.code
+				}
+			}
+			// Build accounts and destructs from s.accounts
+			accounts := make(map[common.Hash][]byte)
+			destructs := make(map[common.Hash]struct{})
+			for k, v := range s.accounts {
+				if v == nil {
+					destructs[k] = struct{}{}
+				} else {
+					accounts[k] = v
+				}
+			}
+			s.OnCommit(
+				origin,
+				root,
+				destructs,
+				accounts,
+				s.accountsOrigin,
+				s.storages,
+				s.storagesOrigin,
+				contracts,
+			)
 		}
 	}
 	// Clear all internal flags at the end of commit operation.
@@ -1542,4 +1573,8 @@ func (s *StateDB) markUpdate(addr common.Address) {
 	}
 	s.mutations[addr].applied = false
 	s.mutations[addr].typ = update
+}
+
+func (s *StateDB) SetOnCommitLogger(logger tracing.CommitHook) {
+	s.OnCommit = logger
 }

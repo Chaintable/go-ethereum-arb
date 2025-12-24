@@ -19,6 +19,8 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/holiman/uint256"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -27,6 +29,8 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+
+	ptypes "github.com/Chaintable/pipeline/types"
 )
 
 // DumpConfig is a set of options to control what portions of the state will be
@@ -37,6 +41,7 @@ type DumpConfig struct {
 	OnlyWithAddresses bool
 	Start             []byte
 	Max               uint64
+	UseStorageKeyHash bool
 }
 
 // DumpCollector interface which the state trie calls during iteration
@@ -194,7 +199,11 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 					log.Error("Failed to decode the value returned by iterator", "error", err)
 					continue
 				}
-				account.Storage[common.BytesToHash(s.trie.GetKey(storageIt.Key))] = common.Bytes2Hex(content)
+				if conf.UseStorageKeyHash {
+					account.Storage[common.BytesToHash(storageIt.Key)] = common.Bytes2Hex(content)
+				} else {
+					account.Storage[common.BytesToHash(s.trie.GetKey(storageIt.Key))] = common.Bytes2Hex(content)
+				}
 			}
 		}
 		c.OnAccount(address, account)
@@ -243,4 +252,65 @@ func (s *StateDB) Dump(opts *DumpConfig) []byte {
 // IterativeDump dumps out accounts as json-objects, delimited by linebreaks on stdout
 func (s *StateDB) IterativeDump(opts *DumpConfig, output *json.Encoder) {
 	s.DumpToCollector(iterativeDump{output}, opts)
+}
+
+type Alloc struct {
+	Root     common.Hash
+	Accounts map[common.Hash]DumpAccount
+}
+
+func (a *Alloc) OnRoot(root common.Hash) {
+	a.Root = root
+}
+func (a *Alloc) OnAccount(addr *common.Address, account DumpAccount) {
+	if addr == nil {
+		a.Accounts[common.BytesToHash(account.AddressHash)] = account
+	} else {
+		a.Accounts[crypto.Keccak256Hash(addr.Bytes())] = account
+	}
+}
+
+func (a *Alloc) ToStorageDiff(UseStorageKeyHash bool) *ptypes.BlockStorageDiff {
+	diff := &ptypes.BlockStorageDiff{
+		Hash:            a.Root,
+		ParentHash:      types.EmptyRootHash,
+		NewAccounts:     make([]ptypes.NewAccount, 0),
+		DeletedAccounts: make([]common.Hash, 0),
+		StorageDiff:     make([]ptypes.AccountStorageDiff, 0),
+		NewCodes:        make([]ptypes.NewCode, 0),
+	}
+	for addrHash, acc := range a.Accounts {
+		diff.NewAccounts = append(diff.NewAccounts, ptypes.NewAccount{
+			Address:  addrHash,
+			Balance:  uint256.MustFromDecimal(acc.Fixed),
+			Nonce:    acc.Nonce,
+			CodeHash: crypto.HashData(crypto.NewKeccakState(), acc.Code),
+		})
+		if len(acc.Code) > 0 {
+			diff.NewCodes = append(diff.NewCodes, ptypes.NewCode{
+				CodeHash: crypto.HashData(crypto.NewKeccakState(), acc.Code),
+				Code:     acc.Code,
+			})
+		}
+		values := make([]ptypes.IndexValuePair, 0)
+		for index, storageValue := range acc.Storage {
+			v := common.HexToHash(storageValue)
+			value := uint256.NewInt(0).SetBytes(v.Bytes())
+			var hashedIndex common.Hash
+			if UseStorageKeyHash {
+				hashedIndex = common.BytesToHash(index[:])
+			} else {
+				hashedIndex = crypto.Keccak256Hash(index[:])
+			}
+			values = append(values, ptypes.IndexValuePair{
+				Index: hashedIndex,
+				Value: value,
+			})
+		}
+		diff.StorageDiff = append(diff.StorageDiff, ptypes.AccountStorageDiff{
+			Address: addrHash,
+			Values:  values,
+		})
+	}
+	return diff
 }

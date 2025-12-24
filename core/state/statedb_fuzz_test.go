@@ -36,7 +36,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
@@ -180,14 +179,10 @@ func (test *stateTest) run() bool {
 		roots       []common.Hash
 		accountList []map[common.Address][]byte
 		storageList []map[common.Address]map[common.Hash][]byte
-		onCommit    = func(states *triestate.Set) {
-			accountList = append(accountList, copySet(states.Accounts))
-			storageList = append(storageList, copy2DSet(states.Storages))
-		}
-		disk      = rawdb.NewMemoryDatabase()
-		tdb       = triedb.NewDatabase(disk, &triedb.Config{PathDB: pathdb.Defaults})
-		sdb       = NewDatabaseWithNodeDB(disk, tdb)
-		byzantium = rand.Intn(2) == 0
+		disk        = rawdb.NewMemoryDatabase()
+		tdb         = triedb.NewDatabase(disk, &triedb.Config{PathDB: pathdb.Defaults})
+		sdb         = NewDatabaseWithNodeDB(disk, tdb)
+		byzantium   = rand.Intn(2) == 0
 	)
 	defer disk.Close()
 	defer tdb.Close()
@@ -210,7 +205,6 @@ func (test *stateTest) run() bool {
 		if err != nil {
 			panic(err)
 		}
-		state.onCommit = onCommit
 
 		for i, action := range actions {
 			if i%test.chunk == 0 && i != 0 {

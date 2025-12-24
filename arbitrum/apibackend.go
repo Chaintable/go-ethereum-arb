@@ -186,6 +186,13 @@ func (a *APIBackend) GetAPIs(filterSystem *filters.FilterSystem) []rpc.API {
 		Public:    true,
 	})
 
+	apis = append(apis, rpc.API{
+		Namespace: "trace",
+		Version:   "1.0",
+		Service:   NewDebankAPI(a),
+		Public:    true,
+	})
+
 	apis = append(apis, tracers.APIs(a)...)
 
 	return apis

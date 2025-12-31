@@ -343,8 +343,23 @@ func (r *Receipt) DeriveFields(signer Signer, context DeriveReceiptContext) {
 	r.Bloom = CreateBloom(r)
 }
 
-func (r *Receipt) SetEffectiveGasPrice(tx *Transaction, baseFee *big.Int) {
-	r.EffectiveGasPrice = tx.inner.effectiveGasPrice(new(big.Int), baseFee)
+// SetEffectiveGasPrice Copy from marshalReceipt
+func (r *Receipt) SetEffectiveGasPrice(tx *Transaction, baeFee *big.Int, blockNumber *big.Int, config *params.ChainConfig) {
+	if config.IsArbitrumNitro(blockNumber) {
+		if baeFee == nil {
+			r.EffectiveGasPrice = big.NewInt(0)
+			return
+		}
+		r.EffectiveGasPrice = baeFee
+	} else {
+		inner := tx.GetInner()
+		arbTx, ok := inner.(*ArbitrumLegacyTxData)
+		if !ok {
+			log.Error("Expected transaction to contain arbitrum data", "txHash", tx.Hash())
+		} else {
+			r.EffectiveGasPrice = big.NewInt(int64(arbTx.EffectiveGasPrice))
+		}
+	}
 }
 
 // ReceiptForStorage is a wrapper around a Receipt with RLP serialization

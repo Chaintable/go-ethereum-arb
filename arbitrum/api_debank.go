@@ -131,7 +131,7 @@ func (api *DebankAPI) DebankBlock(ctx context.Context, blockNrOrHash rpc.BlockNu
 			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
 
-		receipt.SetEffectiveGasPrice(tx, blockCtx.BaseFee)
+		receipt.SetEffectiveGasPrice(tx, blockCtx, api.backend.ChainConfig())
 	}
 
 	root, destructs, accounts, storages, codes, err := statedb.StateDiff(api.backend.ChainConfig().IsEIP158(block.Number()))

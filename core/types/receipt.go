@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -343,8 +344,23 @@ func (r *Receipt) DeriveFields(signer Signer, context DeriveReceiptContext) {
 	r.Bloom = CreateBloom(r)
 }
 
-func (r *Receipt) SetEffectiveGasPrice(tx *Transaction, baseFee *big.Int) {
-	r.EffectiveGasPrice = tx.inner.effectiveGasPrice(new(big.Int), baseFee)
+// SetEffectiveGasPrice Copy from marshalReceipt
+func (r *Receipt) SetEffectiveGasPrice(tx *Transaction, ctx vm.BlockContext, config *params.ChainConfig) {
+	if config.IsArbitrumNitro(ctx.BlockNumber) {
+		if ctx.BaseFee == nil {
+			r.EffectiveGasPrice = big.NewInt(0)
+			return
+		}
+		r.EffectiveGasPrice = ctx.BaseFee
+	} else {
+		inner := tx.GetInner()
+		arbTx, ok := inner.(*ArbitrumLegacyTxData)
+		if !ok {
+			log.Error("Expected transaction to contain arbitrum data", "txHash", tx.Hash())
+		} else {
+			r.EffectiveGasPrice = big.NewInt(int64(arbTx.EffectiveGasPrice))
+		}
+	}
 }
 
 // ReceiptForStorage is a wrapper around a Receipt with RLP serialization

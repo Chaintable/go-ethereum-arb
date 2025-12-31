@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -345,13 +344,13 @@ func (r *Receipt) DeriveFields(signer Signer, context DeriveReceiptContext) {
 }
 
 // SetEffectiveGasPrice Copy from marshalReceipt
-func (r *Receipt) SetEffectiveGasPrice(tx *Transaction, ctx vm.BlockContext, config *params.ChainConfig) {
-	if config.IsArbitrumNitro(ctx.BlockNumber) {
-		if ctx.BaseFee == nil {
+func (r *Receipt) SetEffectiveGasPrice(tx *Transaction, baeFee *big.Int, blockNumber *big.Int, config *params.ChainConfig) {
+	if config.IsArbitrumNitro(blockNumber) {
+		if baeFee == nil {
 			r.EffectiveGasPrice = big.NewInt(0)
 			return
 		}
-		r.EffectiveGasPrice = ctx.BaseFee
+		r.EffectiveGasPrice = baeFee
 	} else {
 		inner := tx.GetInner()
 		arbTx, ok := inner.(*ArbitrumLegacyTxData)

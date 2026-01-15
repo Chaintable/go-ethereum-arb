@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 )
@@ -274,6 +275,25 @@ func (r *Receipt) Size() common.StorageSize {
 		size += common.StorageSize(len(log.Topics)*common.HashLength + len(log.Data))
 	}
 	return size
+}
+
+// SetEffectiveGasPrice Copy from marshalReceipt
+func (r *Receipt) SetEffectiveGasPrice(tx *Transaction, baeFee *big.Int, blockNumber *big.Int, config *params.ChainConfig) {
+	if config.IsArbitrumNitro(blockNumber) {
+		if baeFee == nil {
+			r.EffectiveGasPrice = big.NewInt(0)
+			return
+		}
+		r.EffectiveGasPrice = baeFee
+	} else {
+		inner := tx.GetInner()
+		arbTx, ok := inner.(*ArbitrumLegacyTxData)
+		if !ok {
+			log.Error("Expected transaction to contain arbitrum data", "txHash", tx.Hash())
+		} else {
+			r.EffectiveGasPrice = big.NewInt(int64(arbTx.EffectiveGasPrice))
+		}
+	}
 }
 
 // ReceiptForStorage is a wrapper around a Receipt with RLP serialization

@@ -224,6 +224,7 @@ func (s *stateObject) SetState(key, value common.Hash) {
 	if prev == value {
 		return
 	}
+
 	var prevvalue *common.Hash
 	if dirty {
 		prevvalue = &prev

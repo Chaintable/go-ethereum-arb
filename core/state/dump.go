@@ -35,6 +35,7 @@ type DumpConfig struct {
 	SkipCode          bool
 	SkipStorage       bool
 	OnlyWithAddresses bool
+	UseStorageKeyHash bool
 	Start             []byte
 	Max               uint64
 }
@@ -182,7 +183,11 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 					log.Error("Failed to decode the value returned by iterator", "error", err)
 					continue
 				}
-				account.Storage[common.BytesToHash(s.trie.GetKey(storageIt.Key))] = common.Bytes2Hex(content)
+				if conf.UseStorageKeyHash {
+					account.Storage[common.BytesToHash(storageIt.Key)] = common.Bytes2Hex(content)
+				} else {
+					account.Storage[common.BytesToHash(s.trie.GetKey(storageIt.Key))] = common.Bytes2Hex(content)
+				}
 			}
 		}
 		c.OnAccount(address, account)

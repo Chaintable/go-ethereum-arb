@@ -184,6 +184,10 @@ func (api *DebankAPI) DebankBlock(ctx context.Context, blockNrOrHash rpc.BlockNu
 	blockCtx := core.NewEVMBlockContext(block.Header(), ethapi.NewChainContext(ctx, api.backend), nil)
 	evm := vm.NewEVM(blockCtx, vm.TxContext{}, statedb, api.backend.ChainConfig(), vm.Config{Tracer: tracer.Hooks})
 
+	// Set logger on statedb so that OnLog hook is triggered when logs are added
+	// This is required for geth 1.14 (nitro 3.5.6), as it doesn't have HookedState like geth 1.16
+	statedb.SetLogger(tracer.Hooks)
+
 	rpcTracer.OnBlockStart(block)
 
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
@@ -206,12 +210,10 @@ func (api *DebankAPI) DebankBlock(ctx context.Context, blockNrOrHash rpc.BlockNu
 		}
 		statedb.SetTxContext(tx.Hash(), i)
 
-		receipt, _, err := core.ApplyTransactionWithEVM(msg, api.backend.ChainConfig(), gp, statedb, block.Number(), block.Hash(), tx, usedGas, evm, nil)
+		_, _, err = core.ApplyTransactionWithEVM(msg, api.backend.ChainConfig(), gp, statedb, block.Number(), block.Hash(), tx, usedGas, evm, nil)
 		if err != nil {
 			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
-
-		receipt.SetEffectiveGasPrice(tx, blockCtx.BaseFee, blockCtx.BlockNumber, api.backend.ChainConfig())
 	}
 
 	root, destructs, accounts, storages, codes, err := statedb.StateDiff(api.backend.ChainConfig().IsEIP158(block.Number()))

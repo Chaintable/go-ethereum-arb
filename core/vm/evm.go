@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -599,6 +600,7 @@ func (evm *EVM) ChainConfig() *params.ChainConfig { return evm.chainConfig }
 
 func (evm *EVM) captureBegin(depth int, typ OpCode, from common.Address, to common.Address, input []byte, startGas uint64, value *big.Int) {
 	tracer := evm.Config.Tracer
+	log.Info("[EVM] captureBegin", "depth", depth, "type", typ.String(), "from", from.Hex(), "to", to.Hex(), "startGas", startGas)
 	if tracer.OnEnter != nil {
 		tracer.OnEnter(depth, byte(typ), from, to, input, startGas, value)
 	}
@@ -609,6 +611,8 @@ func (evm *EVM) captureBegin(depth int, typ OpCode, from common.Address, to comm
 
 func (evm *EVM) captureEnd(depth int, startGas uint64, leftOverGas uint64, ret []byte, err error) {
 	tracer := evm.Config.Tracer
+	gasUsed := startGas - leftOverGas
+	log.Info("[EVM] captureEnd", "depth", depth, "startGas", startGas, "leftOverGas", leftOverGas, "gasUsed", gasUsed, "err", err)
 	if leftOverGas != 0 && tracer.OnGasChange != nil {
 		tracer.OnGasChange(leftOverGas, 0, tracing.GasChangeCallLeftOverReturned)
 	}

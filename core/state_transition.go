@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 )
@@ -412,7 +413,9 @@ func (st *StateTransition) preCheck() error {
 // nil evm execution result.
 func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 	endTxNow, startHookUsedGas, err, returnData := st.evm.ProcessingHook.StartTxHook()
+	log.Info("[StateTransition] TransitionDb StartTxHook returned", "endTxNow", endTxNow, "startHookUsedGas", startHookUsedGas, "err", err)
 	if endTxNow {
+		log.Info("[StateTransition] TransitionDb early return due to StartTxHook", "usedGas", startHookUsedGas)
 		return &ExecutionResult{
 			UsedGas:       startHookUsedGas,
 			Err:           err,
@@ -454,6 +457,7 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	log.Info("[StateTransition] IntrinsicGas calculated", "txHash", msg.Tx.Hash().Hex(), "intrinsicGas", gas, "gasLimit", st.msg.GasLimit, "gasRemaining", st.gasRemaining)
 	if st.gasRemaining < gas {
 		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining, gas)
 	}
@@ -461,6 +465,7 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 		t.OnGasChange(st.gasRemaining, st.gasRemaining-gas, tracing.GasChangeTxIntrinsicGas)
 	}
 	st.gasRemaining -= gas
+	log.Info("[StateTransition] After intrinsic gas deduction", "txHash", msg.Tx.Hash().Hex(), "gasRemaining", st.gasRemaining)
 
 	tipAmount := big.NewInt(0)
 	tipReceipient, err := st.evm.ProcessingHook.GasChargingHook(&st.gasRemaining)
@@ -493,6 +498,7 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 		ret   []byte
 		vmerr error // vm errors do not effect consensus and are therefore not assigned to err
 	)
+	log.Info("[StateTransition] Before EVM execution", "txHash", msg.Tx.Hash().Hex(), "contractCreation", contractCreation, "gasRemaining", st.gasRemaining)
 	if contractCreation {
 		deployedContract = &common.Address{}
 		ret, *deployedContract, st.gasRemaining, vmerr = st.evm.Create(sender, msg.Data, st.gasRemaining, value)
@@ -501,6 +507,7 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 		st.state.SetNonce(msg.From, st.state.GetNonce(sender.Address())+1)
 		ret, st.gasRemaining, vmerr = st.evm.Call(sender, st.to(), msg.Data, st.gasRemaining, value)
 	}
+	log.Info("[StateTransition] After EVM execution", "txHash", msg.Tx.Hash().Hex(), "gasRemaining", st.gasRemaining, "vmerr", vmerr)
 
 	var gasRefund uint64
 	if !rules.IsLondon {
@@ -510,6 +517,7 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 		// After EIP-3529: refunds are capped to gasUsed / 5
 		gasRefund = st.refundGas(params.RefundQuotientEIP3529)
 	}
+	log.Info("[StateTransition] After gas refund", "txHash", msg.Tx.Hash().Hex(), "gasRefund", gasRefund, "gasRemaining", st.gasRemaining, "finalGasUsed", st.gasUsed())
 	effectiveTip := msg.GasPrice
 	if rules.IsLondon {
 		effectiveTip = cmath.BigMin(msg.GasTipCap, new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee))

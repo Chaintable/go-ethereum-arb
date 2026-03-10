@@ -108,7 +108,7 @@ func (api *DebankAPI) DebankBlock(ctx context.Context, blockNrOrHash rpc.BlockNu
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
 		core.ProcessBeaconBlockRoot(*beaconRoot, evm)
 	}
-	if api.backend.ChainConfig().IsPrague(block.Number(), block.Time(), blockCtx.ArbOSVersion) || api.backend.ChainConfig().IsVerkle(block.Number(), block.Time()) {
+	if !api.backend.ChainConfig().IsArbitrum() && (api.backend.ChainConfig().IsPrague(block.Number(), block.Time(), blockCtx.ArbOSVersion) || api.backend.ChainConfig().IsVerkle(block.Number(), block.Time())) {
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 	var (

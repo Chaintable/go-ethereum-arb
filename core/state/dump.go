@@ -41,6 +41,7 @@ type DumpConfig struct {
 	OnlyWithAddresses bool
 	Start             []byte
 	Max               uint64
+	UseStorageKeyHash bool
 }
 
 // DumpCollector interface which the state trie calls during iteration
@@ -116,6 +117,9 @@ func (d iterativeDump) OnRoot(root common.Hash) {
 
 // DumpToCollector iterates the state according to the given options and inserts
 // the items into a collector for aggregation or serialization.
+//
+// The state iterator is still trie-based and can be converted to snapshot-based
+// once the state snapshot is fully integrated into database. TODO(rjl493456442).
 func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []byte) {
 	// Sanitize the input to allow nil configs
 	if conf == nil {
@@ -127,15 +131,20 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		start            = time.Now()
 		logged           = time.Now()
 	)
-	log.Info("Trie dumping started", "root", s.trie.Hash())
-	c.OnRoot(s.trie.Hash())
+	log.Info("Trie dumping started", "root", s.originalRoot)
+	c.OnRoot(s.originalRoot)
 
-	trieIt, err := s.trie.NodeIterator(conf.Start)
+	tr, err := s.db.OpenTrie(s.originalRoot)
+	if err != nil {
+		return nil
+	}
+	trieIt, err := tr.NodeIterator(conf.Start)
 	if err != nil {
 		log.Error("Trie dumping error", "err", err)
 		return nil
 	}
 	it := trie.NewIterator(trieIt)
+
 	for it.Next() {
 		var data types.StateAccount
 		if err := rlp.DecodeBytes(it.Value, &data); err != nil {
@@ -151,7 +160,7 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 			}
 			address   *common.Address
 			addr      common.Address
-			addrBytes = s.trie.GetKey(it.Key)
+			addrBytes = tr.GetKey(it.Key)
 		)
 		if addrBytes == nil {
 			missingPreimages++
@@ -169,12 +178,13 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		}
 		if !conf.SkipStorage {
 			account.Storage = make(map[common.Hash]string)
-			tr, err := obj.getTrie()
+
+			storageTr, err := s.db.OpenStorageTrie(s.originalRoot, addr, obj.Root(), tr)
 			if err != nil {
 				log.Error("Failed to load storage trie", "err", err)
 				continue
 			}
-			trieIt, err := tr.NodeIterator(nil)
+			trieIt, err := storageTr.NodeIterator(nil)
 			if err != nil {
 				log.Error("Failed to create trie iterator", "err", err)
 				continue
@@ -186,13 +196,21 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 					log.Error("Failed to decode the value returned by iterator", "error", err)
 					continue
 				}
-				account.Storage[common.BytesToHash(s.trie.GetKey(storageIt.Key))] = common.Bytes2Hex(content)
+				if conf.UseStorageKeyHash {
+					account.Storage[common.BytesToHash(storageIt.Key)] = common.Bytes2Hex(content)
+				} else {
+					key := storageTr.GetKey(storageIt.Key)
+					if key == nil {
+						continue
+					}
+					account.Storage[common.BytesToHash(key)] = common.Bytes2Hex(content)
+				}
 			}
 		}
 		c.OnAccount(address, account)
 		accounts++
 		if time.Since(logged) > 8*time.Second {
-			log.Info("Trie dumping in progress", "at", it.Key, "accounts", accounts,
+			log.Info("Trie dumping in progress", "at", common.Bytes2Hex(it.Key), "accounts", accounts,
 				"elapsed", common.PrettyDuration(time.Since(start)))
 			logged = time.Now()
 		}
@@ -253,7 +271,7 @@ func (a *Alloc) OnAccount(addr *common.Address, account DumpAccount) {
 	}
 }
 
-func (a *Alloc) ToStorageDiff() *ptypes.BlockStorageDiff {
+func (a *Alloc) ToStorageDiff(UseStorageKeyHash bool) *ptypes.BlockStorageDiff {
 	diff := &ptypes.BlockStorageDiff{
 		Hash:            a.Root,
 		ParentHash:      types.EmptyRootHash,
@@ -279,8 +297,14 @@ func (a *Alloc) ToStorageDiff() *ptypes.BlockStorageDiff {
 		for index, storageValue := range acc.Storage {
 			v := common.HexToHash(storageValue)
 			value := uint256.NewInt(0).SetBytes(v.Bytes())
+			var hashedIndex common.Hash
+			if UseStorageKeyHash {
+				hashedIndex = common.BytesToHash(index[:])
+			} else {
+				hashedIndex = crypto.Keccak256Hash(index[:])
+			}
 			values = append(values, ptypes.IndexValuePair{
-				Index: crypto.Keccak256Hash(index[:]),
+				Index: hashedIndex,
 				Value: value,
 			})
 		}

@@ -29,7 +29,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/bloombits"
+	"github.com/ethereum/go-ethereum/core/filtermaps"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -40,8 +41,9 @@ import (
 
 // Config represents the configuration of the filter system.
 type Config struct {
-	LogCacheSize int           // maximum number of cached blocks (default: 32)
-	Timeout      time.Duration // how long filters stay active (default: 5min)
+	LogCacheSize  int           // maximum number of cached blocks (default: 32)
+	Timeout       time.Duration // how long filters stay active (default: 5min)
+	LogQueryLimit int           // maximum number of addresses allowed in filter criteria (default: 1000)
 }
 
 func (cfg Config) withDefaults() Config {
@@ -64,13 +66,14 @@ type Backend interface {
 
 	CurrentHeader() *types.Header
 	ChainConfig() *params.ChainConfig
+	HistoryPruningCutoff() uint64
 	SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription
 	SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription
 	SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription
 	SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription
 
-	BloomStatus() (uint64, uint64)
-	ServiceFilter(ctx context.Context, session *bloombits.MatcherSession)
+	CurrentView() *filtermaps.ChainView
+	NewMatcherBackend() filtermaps.MatcherBackend
 }
 
 // FilterSystem holds resources shared by all filters.
@@ -96,7 +99,7 @@ type logCacheElem struct {
 }
 
 // cachedLogElem loads block logs from the backend and caches the result.
-func (sys *FilterSystem) cachedLogElem(ctx context.Context, blockHash common.Hash, number uint64) (*logCacheElem, error) {
+func (sys *FilterSystem) cachedLogElem(ctx context.Context, blockHash common.Hash, number, time uint64) (*logCacheElem, error) {
 	cached, ok := sys.logsCache.Get(blockHash)
 	if ok {
 		return cached, nil
@@ -117,6 +120,7 @@ func (sys *FilterSystem) cachedLogElem(ctx context.Context, blockHash common.Has
 		for _, log := range txLogs {
 			log.BlockHash = blockHash
 			log.BlockNumber = number
+			log.BlockTimestamp = time
 			log.TxIndex = uint(i)
 			log.Index = logIdx
 			logIdx++
@@ -204,7 +208,7 @@ type EventSystem struct {
 }
 
 // NewEventSystem creates a new manager that listens for event on the given mux,
-// parses and filters them. It uses the all map to retrieve filter changes. The
+// parses and filters them. It uses an internal map to retrieve filter changes. The
 // work loop holds its own index that is used to forward events to filters.
 //
 // The returned manager has a loop that needs to be stopped with the Stop function
@@ -288,6 +292,16 @@ func (es *EventSystem) SubscribeLogs(crit ethereum.FilterQuery, logs chan []*typ
 	if len(crit.Topics) > maxTopics {
 		return nil, errExceedMaxTopics
 	}
+	if es.sys.cfg.LogQueryLimit != 0 {
+		if len(crit.Addresses) > es.sys.cfg.LogQueryLimit {
+			return nil, errExceedLogQueryLimit
+		}
+		for _, topics := range crit.Topics {
+			if len(topics) > es.sys.cfg.LogQueryLimit {
+				return nil, errExceedLogQueryLimit
+			}
+		}
+	}
 	var from, to rpc.BlockNumber
 	if crit.FromBlock == nil {
 		from = rpc.LatestBlockNumber
@@ -303,6 +317,14 @@ func (es *EventSystem) SubscribeLogs(crit ethereum.FilterQuery, logs chan []*typ
 	// Pending logs are not supported anymore.
 	if from == rpc.PendingBlockNumber || to == rpc.PendingBlockNumber {
 		return nil, errPendingLogsUnsupported
+	}
+
+	if from == rpc.EarliestBlockNumber {
+		from = rpc.BlockNumber(es.backend.HistoryPruningCutoff())
+	}
+	// Queries beyond the pruning cutoff are not supported.
+	if uint64(from) < es.backend.HistoryPruningCutoff() {
+		return nil, &history.PrunedHistoryError{}
 	}
 
 	// only interested in new mined logs
@@ -376,7 +398,7 @@ func (es *EventSystem) handleLogs(filters filterIndex, ev []*types.Log) {
 		return
 	}
 	for _, f := range filters[LogsSubscription] {
-		matchedLogs := FilterLogs(ev, f.logsCrit.FromBlock, f.logsCrit.ToBlock, f.logsCrit.Addresses, f.logsCrit.Topics)
+		matchedLogs := types.FilterLogs(ev, f.logsCrit.FromBlock, f.logsCrit.ToBlock, f.logsCrit.Addresses, f.logsCrit.Topics)
 		if len(matchedLogs) > 0 {
 			f.logs <- matchedLogs
 		}

@@ -37,66 +37,95 @@ func withLegacyZeroBaseFeeUntil(t *testing.T, ts uint64) {
 	t.Cleanup(func() { legacyZeroBaseFeeUntil.Store(prev) })
 }
 
-func TestDeserialize_DefaultZeroBaseFeeArbos40(t *testing.T) {
-	withLegacyZeroBaseFeeUntil(t, 0)
-	h := arbHeader(t, params.ArbosVersion_40, big.NewInt(0), 1_000)
-	got := DeserializeHeaderExtraInformation(h)
-	if got.ArbOSFormatVersion != params.ArbosVersion_40 {
-		t.Fatalf("default behavior should parse zero-basefee headers; got %+v", got)
+func TestDeserializeHeaderExtraInformation(t *testing.T) {
+	cases := []struct {
+		name         string
+		legacyUntil  uint64
+		arbosVersion uint64
+		baseFee      *big.Int
+		time         uint64
+		wantEmpty    bool // true => expect HeaderInfo{}; false => expect ArbOSFormatVersion == arbosVersion
+	}{
+		{
+			name:         "default (guard disabled): zero basefee at v40 parses normally",
+			legacyUntil:  0,
+			arbosVersion: params.ArbosVersion_40,
+			baseFee:      big.NewInt(0),
+			time:         1_000,
+			wantEmpty:    false,
+		},
+		{
+			name:         "legacy mode: zero basefee at v40 below cutoff is non-arbitrum",
+			legacyUntil:  1_000_000,
+			arbosVersion: params.ArbosVersion_40,
+			baseFee:      big.NewInt(0),
+			time:         500_000,
+			wantEmpty:    true,
+		},
+		{
+			name:         "legacy mode: zero basefee at pre-v40 below cutoff is non-arbitrum",
+			legacyUntil:  1_000_000,
+			arbosVersion: params.ArbosVersion_11,
+			baseFee:      big.NewInt(0),
+			time:         500_000,
+			wantEmpty:    true,
+		},
+		{
+			name:         "legacy mode boundary: time == cutoff parses normally (strict <)",
+			legacyUntil:  500,
+			arbosVersion: params.ArbosVersion_40,
+			baseFee:      big.NewInt(0),
+			time:         500,
+			wantEmpty:    false,
+		},
+		{
+			name:         "legacy mode: ArbOS>40 bypasses the gate",
+			legacyUntil:  math.MaxUint64,
+			arbosVersion: params.ArbosVersion_41,
+			baseFee:      big.NewInt(0),
+			time:         500,
+			wantEmpty:    false,
+		},
+		{
+			name:         "legacy mode: non-zero basefee bypasses the gate",
+			legacyUntil:  math.MaxUint64,
+			arbosVersion: params.ArbosVersion_40,
+			baseFee:      big.NewInt(1),
+			time:         500,
+			wantEmpty:    false,
+		},
+		{
+			name:         "legacy mode: post-upgrade timestamp parses normally",
+			legacyUntil:  1_000_000,
+			arbosVersion: params.ArbosVersion_40,
+			baseFee:      big.NewInt(0),
+			time:         1_500_000,
+			wantEmpty:    false,
+		},
+		{
+			name:         "nil basefee always returns empty HeaderInfo",
+			legacyUntil:  math.MaxUint64,
+			arbosVersion: params.ArbosVersion_40,
+			baseFee:      nil,
+			time:         500,
+			wantEmpty:    true,
+		},
 	}
-}
 
-func TestDeserialize_LegacyModeZeroBaseFeeArbos40(t *testing.T) {
-	withLegacyZeroBaseFeeUntil(t, 1_000_000)
-	h := arbHeader(t, params.ArbosVersion_40, big.NewInt(0), 500_000)
-	got := DeserializeHeaderExtraInformation(h)
-	if got != (HeaderInfo{}) {
-		t.Fatalf("legacy mode should report zero-basefee header as non-arbitrum; got %+v", got)
-	}
-}
-
-func TestDeserialize_LegacyModeBoundaryStrict(t *testing.T) {
-	withLegacyZeroBaseFeeUntil(t, 500)
-	// header.Time == flag is NOT in legacy range (strict <).
-	h := arbHeader(t, params.ArbosVersion_40, big.NewInt(0), 500)
-	got := DeserializeHeaderExtraInformation(h)
-	if got.ArbOSFormatVersion != params.ArbosVersion_40 {
-		t.Fatalf("boundary timestamp should parse normally; got %+v", got)
-	}
-}
-
-func TestDeserialize_LegacyModeAboveArbos40(t *testing.T) {
-	withLegacyZeroBaseFeeUntil(t, math.MaxUint64)
-	h := arbHeader(t, params.ArbosVersion_41, big.NewInt(0), 500)
-	got := DeserializeHeaderExtraInformation(h)
-	if got.ArbOSFormatVersion != params.ArbosVersion_41 {
-		t.Fatalf("ArbOS>40 should bypass the legacy gate; got %+v", got)
-	}
-}
-
-func TestDeserialize_LegacyModeNonZeroBaseFee(t *testing.T) {
-	withLegacyZeroBaseFeeUntil(t, math.MaxUint64)
-	h := arbHeader(t, params.ArbosVersion_40, big.NewInt(1), 500)
-	got := DeserializeHeaderExtraInformation(h)
-	if got.ArbOSFormatVersion != params.ArbosVersion_40 {
-		t.Fatalf("non-zero basefee should bypass the legacy gate; got %+v", got)
-	}
-}
-
-func TestDeserialize_LegacyModeAfterUpgrade(t *testing.T) {
-	withLegacyZeroBaseFeeUntil(t, 1_000_000)
-	h := arbHeader(t, params.ArbosVersion_40, big.NewInt(0), 1_500_000)
-	got := DeserializeHeaderExtraInformation(h)
-	if got.ArbOSFormatVersion != params.ArbosVersion_40 {
-		t.Fatalf("post-upgrade timestamp should parse normally; got %+v", got)
-	}
-}
-
-func TestDeserialize_NilBaseFeeUnchanged(t *testing.T) {
-	withLegacyZeroBaseFeeUntil(t, math.MaxUint64)
-	h := arbHeader(t, params.ArbosVersion_40, nil, 500)
-	got := DeserializeHeaderExtraInformation(h)
-	if got != (HeaderInfo{}) {
-		t.Fatalf("nil basefee should always return empty HeaderInfo; got %+v", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withLegacyZeroBaseFeeUntil(t, tc.legacyUntil)
+			h := arbHeader(t, tc.arbosVersion, tc.baseFee, tc.time)
+			got := DeserializeHeaderExtraInformation(h)
+			if tc.wantEmpty {
+				if got != (HeaderInfo{}) {
+					t.Fatalf("want empty HeaderInfo, got %+v", got)
+				}
+				return
+			}
+			if got.ArbOSFormatVersion != tc.arbosVersion {
+				t.Fatalf("want ArbOSFormatVersion=%d, got %+v", tc.arbosVersion, got)
+			}
+		})
 	}
 }

@@ -683,8 +683,8 @@ func DeserializeHeaderExtraInformation(header *Header) HeaderInfo {
 		extra.CollectTips = false
 	}
 	if extra.ArbOSFormatVersion <= params.ArbosVersion_40 &&
-		header.Time < legacyZeroBaseFeeUntil.Load() &&
-		header.BaseFee.Sign() == 0 {
+		header.BaseFee.Sign() == 0 &&
+		header.Time < legacyZeroBaseFeeUntil.Load() {
 		return HeaderInfo{}
 	}
 	return extra

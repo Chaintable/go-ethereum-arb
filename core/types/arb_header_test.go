@@ -30,6 +30,8 @@ func arbHeader(t *testing.T, arbosVersion uint64, baseFee *big.Int, time uint64)
 	}
 }
 
+// Mutates package-global legacyZeroBaseFeeUntil and restores it on cleanup;
+// callers must not use t.Parallel() (concurrent prev/Store/Cleanup would race).
 func withLegacyZeroBaseFeeUntil(t *testing.T, ts uint64) {
 	t.Helper()
 	prev := legacyZeroBaseFeeUntil.Load()

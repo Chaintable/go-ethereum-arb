@@ -51,6 +51,7 @@ type Options struct {
 	BlockOverrides   *override.BlockOverrides // Block overrides to apply during the estimation
 	Backend          core.NodeInterfaceBackendAPI
 	RunScheduledTxes func(context.Context, core.NodeInterfaceBackendAPI, *state.StateDB, *types.Header, vm.BlockContext, *core.MessageRunContext, *core.ExecutionResult, core.TxFilterer) (*core.ExecutionResult, error)
+	TxFilterer core.TxFilterer // If non-nil, applies address/event filtering during estimation
 
 	ErrorRatio float64 // Allowed overestimation ratio for faster estimation termination
 }
@@ -282,7 +283,7 @@ func run(ctx context.Context, call *core.Message, opts *Options) (*core.Executio
 	}
 
 	// Arbitrum: set up address filtering
-	txFilterer := opts.Backend.TxFilter()
+	txFilterer := opts.TxFilterer
 	if txFilterer != nil {
 		txFilterer.Setup(dirtyState)
 

@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/rlp"
 	"maps"
 	"math/big"
 	"slices"
@@ -29,6 +28,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -1288,12 +1289,16 @@ func (s *StateDB) GetTrie() Trie {
 	return s.trie
 }
 
-func (s *StateDB) StateDiff(deleteEmptyObjects bool) (root common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, codes map[common.Hash][]byte, err error) {
-	root = s.IntermediateRoot(deleteEmptyObjects)
+func (s *StateDB) StateDiff(deleteEmptyObjects bool) (destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, codes map[common.Hash][]byte, err error) {
 	destructs = make(map[common.Hash]struct{})
 	accounts = make(map[common.Hash][]byte)
 	storages = make(map[common.Hash]map[common.Hash][]byte)
 	codes = make(map[common.Hash][]byte)
+	s.Finalise(deleteEmptyObjects)
+	if s.Error() != nil {
+		err = s.Error()
+		return
+	}
 	var (
 		buf    = crypto.NewKeccakState()
 		encode = func(val common.Hash) []byte {

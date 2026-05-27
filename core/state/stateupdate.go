@@ -22,6 +22,12 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb"
+
+	ptypes "github.com/Chaintable/pipeline/types"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/holiman/uint256"
 )
 
 // contractCode represents a contract code with associated metadata.
@@ -192,4 +198,73 @@ func (sc *stateUpdate) stateSet() *triedb.StateSet {
 		StoragesOrigin: sc.storagesOrigin,
 		RawStorageKey:  sc.rawStorageKey,
 	}
+}
+
+func (sc *stateUpdate) GetStateDiff() *ptypes.BlockStorageDiff {
+	var (
+		stateDiff  = &ptypes.BlockStorageDiff{}
+		contracts  = make(map[common.Hash][]byte)
+		accounts   = make(map[common.Hash][]byte)
+		destructs  = make(map[common.Hash]struct{})
+		originRoot = types.EmptyRootHash
+		root       = types.EmptyRootHash
+	)
+	for _, code := range sc.codes {
+		contracts[code.hash] = code.blob
+	}
+	for k, v := range sc.accounts {
+		if v == nil {
+			destructs[k] = struct{}{}
+		} else {
+			accounts[k] = v
+		}
+	}
+	for addrhash := range destructs {
+		stateDiff.DeletedAccounts = append(stateDiff.DeletedAccounts, addrhash)
+	}
+	for k, v := range accounts {
+		account, _ := types.FullAccount(v)
+		stateDiff.NewAccounts = append(stateDiff.NewAccounts, ptypes.NewAccount{
+			Address:  k,
+			Balance:  account.Balance,
+			Nonce:    account.Nonce,
+			CodeHash: common.BytesToHash(account.CodeHash),
+		})
+	}
+	for account, storage := range sc.storages {
+		Values := make([]ptypes.IndexValuePair, 0, len(storage))
+		for index, v := range storage {
+			value := uint256.NewInt(0)
+			if len(v) > 0 {
+				_, content, _, err := rlp.Split(v)
+				if err != nil {
+					log.Error("Failed to split storage", "err", err)
+				}
+				value = uint256.NewInt(0).SetBytes(content)
+			}
+			Values = append(Values, ptypes.IndexValuePair{
+				Index: index,
+				Value: value,
+			})
+		}
+		stateDiff.StorageDiff = append(stateDiff.StorageDiff, ptypes.AccountStorageDiff{
+			Address: account,
+			Values:  Values,
+		})
+	}
+	for hash, code := range contracts {
+		stateDiff.NewCodes = append(stateDiff.NewCodes, ptypes.NewCode{
+			CodeHash: hash,
+			Code:     code,
+		})
+	}
+	if sc.originRoot != (common.Hash{}) {
+		originRoot = sc.originRoot
+	}
+	if root != (common.Hash{}) {
+		root = sc.root
+	}
+	stateDiff.Hash = root
+	stateDiff.ParentHash = originRoot
+	return stateDiff
 }

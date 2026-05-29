@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/arbcrypto"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -39,7 +40,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
-	"golang.org/x/crypto/sha3"
 )
 
 type Prestate struct {
@@ -378,7 +378,10 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 func MakePreState(db ethdb.Database, accounts types.GenesisAlloc) *state.StateDB {
 	tdb := triedb.NewDatabase(db, &triedb.Config{Preimages: true})
 	sdb := state.NewDatabase(tdb, nil)
-	statedb, _ := state.New(types.EmptyRootHash, sdb)
+	statedb, err := state.New(types.EmptyRootHash, sdb)
+	if err != nil {
+		panic(fmt.Errorf("failed to create initial state: %v", err))
+	}
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code, tracing.CodeChangeUnspecified)
 		statedb.SetNonce(addr, a.Nonce, tracing.NonceChangeGenesis)
@@ -388,13 +391,19 @@ func MakePreState(db ethdb.Database, accounts types.GenesisAlloc) *state.StateDB
 		}
 	}
 	// Commit and re-open to start with a clean state.
-	root, _ := statedb.Commit(0, false, false)
-	statedb, _ = state.New(root, sdb)
+	root, err := statedb.Commit(0, false, false)
+	if err != nil {
+		panic(fmt.Errorf("failed to commit initial state: %v", err))
+	}
+	statedb, err = state.New(root, sdb)
+	if err != nil {
+		panic(fmt.Errorf("failed to reopen state after commit: %v", err))
+	}
 	return statedb
 }
 
 func rlpHash(x interface{}) (h common.Hash) {
-	hw := sha3.NewLegacyKeccak256()
+	hw := arbcrypto.NewLegacyKeccak256()
 	rlp.Encode(hw, x)
 	hw.Sum(h[:0])
 	return h

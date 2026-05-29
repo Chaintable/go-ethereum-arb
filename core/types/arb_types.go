@@ -6,10 +6,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -617,11 +619,14 @@ func (t *ArbitrumInternalTx) sigHash(chainID *big.Int) common.Hash {
 		})
 }
 
+const ArbosVersionCollectTipsOld = params.ArbosVersion_9
+
 type HeaderInfo struct {
 	SendRoot           common.Hash
 	SendCount          uint64
 	L1BlockNumber      uint64
 	ArbOSFormatVersion uint64
+	CollectTips        bool
 }
 
 func (info HeaderInfo) extra() []byte {
@@ -633,12 +638,30 @@ func (info HeaderInfo) mixDigest() [32]byte {
 	binary.BigEndian.PutUint64(mixDigest[:8], info.SendCount)
 	binary.BigEndian.PutUint64(mixDigest[8:16], info.L1BlockNumber)
 	binary.BigEndian.PutUint64(mixDigest[16:24], info.ArbOSFormatVersion)
+	if info.CollectTips && info.ArbOSFormatVersion != ArbosVersionCollectTipsOld {
+		mixDigest[25] = 1
+	} else {
+		mixDigest[25] = 0
+	}
 	return mixDigest
 }
 
 func (info HeaderInfo) UpdateHeaderWithInfo(header *Header) {
 	header.MixDigest = info.mixDigest()
 	header.Extra = info.extra()
+}
+
+// legacyZeroBaseFeeUntil restores the pre-v3.7 guard (dropped in upstream
+// geth commit 61ab3402a6) that reported ArbOS<=40 zero-basefee headers as
+// non-arbitrum. Headers with Time strictly below this cutoff trigger that
+// path; 0 leaves the guard inactive (Time is uint64, so Time < 0 never
+// holds). Atomic because DeserializeHeaderExtraInformation is read from
+// goroutines that may start before the setter runs.
+var legacyZeroBaseFeeUntil atomic.Uint64
+
+// SetLegacyZeroBaseFeeUntil sets the cutoff timestamp (exclusive).
+func SetLegacyZeroBaseFeeUntil(ts uint64) {
+	legacyZeroBaseFeeUntil.Store(ts)
 }
 
 func DeserializeHeaderExtraInformation(header *Header) HeaderInfo {
@@ -652,5 +675,17 @@ func DeserializeHeaderExtraInformation(header *Header) HeaderInfo {
 	extra.SendCount = binary.BigEndian.Uint64(header.MixDigest[:8])
 	extra.L1BlockNumber = binary.BigEndian.Uint64(header.MixDigest[8:16])
 	extra.ArbOSFormatVersion = binary.BigEndian.Uint64(header.MixDigest[16:24])
+	if extra.ArbOSFormatVersion == ArbosVersionCollectTipsOld {
+		extra.CollectTips = true
+	} else if header.MixDigest[25]&0x1 == 1 {
+		extra.CollectTips = true
+	} else {
+		extra.CollectTips = false
+	}
+	if extra.ArbOSFormatVersion <= params.ArbosVersion_40 &&
+		header.BaseFee.Sign() == 0 &&
+		header.Time < legacyZeroBaseFeeUntil.Load() {
+		return HeaderInfo{}
+	}
 	return extra
 }

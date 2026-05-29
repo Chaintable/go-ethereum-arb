@@ -55,7 +55,8 @@ type GenesisAlloc = types.GenesisAlloc
 // Genesis specifies the header fields, state of a genesis block. It also defines hard
 // fork switch-over blocks through the chain configuration.
 type Genesis struct {
-	Config     *params.ChainConfig `json:"config"`
+	// Deprecated: for Arbitrum chains, use SerializedChainConfig instead.
+	Config     *params.ChainConfig `json:"config,omitempty"`
 	Nonce      uint64              `json:"nonce"`
 	Timestamp  uint64              `json:"timestamp"`
 	ExtraData  []byte              `json:"extraData"`
@@ -75,7 +76,21 @@ type Genesis struct {
 	BlobGasUsed   *uint64     `json:"blobGasUsed"`   // EIP-4844
 
 	// Arbitrum
-	ArbOSInit *params.ArbOSInit `json:"arbOSInit,omitempty"`
+	SerializedChainConfig string              `json:"serializedChainConfig,omitempty"`
+	deserializedConfig    *params.ChainConfig // cached deserialized chain config
+	ArbOSInit             *params.ArbOSInit   `json:"arbOSInit,omitempty"`
+}
+
+// GetConfig returns the chain configuration object, corresponding to the g.SerializedChainConfig field.
+func (g *Genesis) GetConfig() (*params.ChainConfig, error) {
+	if g.deserializedConfig == nil {
+		var c params.ChainConfig
+		if err := json.Unmarshal([]byte(g.SerializedChainConfig), &c); err != nil {
+			return nil, fmt.Errorf("failed to deserialize chain config: %w", err)
+		}
+		g.deserializedConfig = &c
+	}
+	return g.deserializedConfig, nil
 }
 
 // copy copies the genesis.
@@ -86,6 +101,7 @@ func (g *Genesis) copy() *Genesis {
 			conf := *g.Config
 			cpy.Config = &conf
 		}
+		cpy.deserializedConfig = nil
 		return &cpy
 	}
 	return nil
@@ -677,23 +693,24 @@ func DeveloperGenesisBlock(gasLimit uint64, faucet *common.Address) *Genesis {
 		BaseFee:    big.NewInt(params.InitialBaseFee),
 		Difficulty: big.NewInt(0),
 		Alloc: map[common.Address]types.Account{
-			common.BytesToAddress([]byte{0x01}): {Balance: big.NewInt(1)}, // ECRecover
-			common.BytesToAddress([]byte{0x02}): {Balance: big.NewInt(1)}, // SHA256
-			common.BytesToAddress([]byte{0x03}): {Balance: big.NewInt(1)}, // RIPEMD
-			common.BytesToAddress([]byte{0x04}): {Balance: big.NewInt(1)}, // Identity
-			common.BytesToAddress([]byte{0x05}): {Balance: big.NewInt(1)}, // ModExp
-			common.BytesToAddress([]byte{0x06}): {Balance: big.NewInt(1)}, // ECAdd
-			common.BytesToAddress([]byte{0x07}): {Balance: big.NewInt(1)}, // ECScalarMul
-			common.BytesToAddress([]byte{0x08}): {Balance: big.NewInt(1)}, // ECPairing
-			common.BytesToAddress([]byte{0x09}): {Balance: big.NewInt(1)}, // BLAKE2b
-			common.BytesToAddress([]byte{0x0a}): {Balance: big.NewInt(1)}, // KZGPointEval
-			common.BytesToAddress([]byte{0x0b}): {Balance: big.NewInt(1)}, // BLSG1Add
-			common.BytesToAddress([]byte{0x0c}): {Balance: big.NewInt(1)}, // BLSG1MultiExp
-			common.BytesToAddress([]byte{0x0d}): {Balance: big.NewInt(1)}, // BLSG2Add
-			common.BytesToAddress([]byte{0x0e}): {Balance: big.NewInt(1)}, // BLSG2MultiExp
-			common.BytesToAddress([]byte{0x0f}): {Balance: big.NewInt(1)}, // BLSG1Pairing
-			common.BytesToAddress([]byte{0x10}): {Balance: big.NewInt(1)}, // BLSG1MapG1
-			common.BytesToAddress([]byte{0x11}): {Balance: big.NewInt(1)}, // BLSG2MapG2
+			common.BytesToAddress([]byte{0x01}):    {Balance: big.NewInt(1)}, // ECRecover
+			common.BytesToAddress([]byte{0x02}):    {Balance: big.NewInt(1)}, // SHA256
+			common.BytesToAddress([]byte{0x03}):    {Balance: big.NewInt(1)}, // RIPEMD
+			common.BytesToAddress([]byte{0x04}):    {Balance: big.NewInt(1)}, // Identity
+			common.BytesToAddress([]byte{0x05}):    {Balance: big.NewInt(1)}, // ModExp
+			common.BytesToAddress([]byte{0x06}):    {Balance: big.NewInt(1)}, // ECAdd
+			common.BytesToAddress([]byte{0x07}):    {Balance: big.NewInt(1)}, // ECScalarMul
+			common.BytesToAddress([]byte{0x08}):    {Balance: big.NewInt(1)}, // ECPairing
+			common.BytesToAddress([]byte{0x09}):    {Balance: big.NewInt(1)}, // BLAKE2b
+			common.BytesToAddress([]byte{0x0a}):    {Balance: big.NewInt(1)}, // KZGPointEval
+			common.BytesToAddress([]byte{0x0b}):    {Balance: big.NewInt(1)}, // BLSG1Add
+			common.BytesToAddress([]byte{0x0c}):    {Balance: big.NewInt(1)}, // BLSG1MultiExp
+			common.BytesToAddress([]byte{0x0d}):    {Balance: big.NewInt(1)}, // BLSG2Add
+			common.BytesToAddress([]byte{0x0e}):    {Balance: big.NewInt(1)}, // BLSG2MultiExp
+			common.BytesToAddress([]byte{0x0f}):    {Balance: big.NewInt(1)}, // BLSG1Pairing
+			common.BytesToAddress([]byte{0x10}):    {Balance: big.NewInt(1)}, // BLSG1MapG1
+			common.BytesToAddress([]byte{0x11}):    {Balance: big.NewInt(1)}, // BLSG2MapG2
+			common.BytesToAddress([]byte{0x1, 00}): {Balance: big.NewInt(1)}, // P256Verify
 			// Pre-deploy system contracts
 			params.BeaconRootsAddress:        {Nonce: 1, Code: params.BeaconRootsCode, Balance: common.Big0},
 			params.HistoryStorageAddress:     {Nonce: 1, Code: params.HistoryStorageCode, Balance: common.Big0},

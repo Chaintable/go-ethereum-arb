@@ -133,7 +133,15 @@ func (t *prestateTracer) OnOpcode(pc uint64, opcode byte, gas, cost uint64, scop
 		addr := common.Address(stackData[stackLen-1].Bytes20())
 		t.lookupAccount(addr)
 		if op == vm.SELFDESTRUCT {
-			t.deleted[caller] = true
+			if t.chainConfig.IsCancun(t.env.BlockNumber, t.env.Time, t.env.ArbOSVersion) {
+				// EIP-6780: only delete if created in same transaction
+				if t.created[caller] {
+					t.deleted[caller] = true
+				}
+			} else {
+				// Pre-EIP-6780: always delete
+				t.deleted[caller] = true
+			}
 		}
 	case stackLen >= 5 && (op == vm.DELEGATECALL || op == vm.CALL || op == vm.STATICCALL || op == vm.CALLCODE):
 		addr := common.Address(stackData[stackLen-2].Bytes20())
@@ -187,6 +195,13 @@ func (t *prestateTracer) OnTxStart(env *tracing.VMContext, tx *types.Transaction
 	t.lookupAccount(env.Coinbase)
 	t.lookupAccount(params.HistoryStorageAddress)
 	t.lookupAccount(types.ArbosStateAddress)
+
+	// Arbos required accounts
+	nullAddress := common.HexToAddress("0x0000000000000000000000000000000000000000")
+	t.lookupAccount(nullAddress)
+	t.lookupAccount(types.L1PricerFundsPoolAddress)
+	t.lookupAccount(types.ArbWasmAddress)
+	t.lookupAccount(types.ArbWasmCacheAddress)
 
 	// Add accounts with authorizations to the prestate before they get applied.
 	for _, auth := range tx.SetCodeAuthorizations() {

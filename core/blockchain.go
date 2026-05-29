@@ -193,10 +193,14 @@ type BlockChainConfig struct {
 	SnapshotRestoreMaxGas uint64 // Rollback up to this much gas to restore snapshot (otherwise snapshot recalculated from nothing)
 	HeadRewindBlocksLimit uint64 // Rollback up to this many blocks to restore chain head (0 = preserve default upstream behaviour), only for HashScheme
 
-	// Arbitrum: configure GC window
+	// Arbitrum:
+	// configure GC window
 	TriesInMemory             uint64        // Height difference before which a trie may not be garbage-collected
 	TrieRetention             time.Duration // Time limit before which a trie may not be garbage-collected
 	TrieTimeLimitRandomOffset time.Duration // Range of random offset of each commit due to TrieTimeLimit period
+	// configure write batch size thresholds
+	TrieCapBatchSize    uint32 // threshold used during capping triedb size
+	TrieCommitBatchSize uint32 // threshold used during committing triedb to disk
 
 	MaxNumberOfBlocksToSkipStateSaving uint32
 	MaxAmountOfGasToSkipStateSaving    uint64
@@ -278,6 +282,10 @@ func (cfg *BlockChainConfig) triedbConfig(isVerkle bool) *triedb.Config {
 	}
 	if cfg.StateScheme == rawdb.HashScheme {
 		config.HashDB = &hashdb.Config{
+			// Arbitrum:
+			IdealCapBatchSize:    cfg.TrieCapBatchSize,
+			IdealCommitBatchSize: cfg.TrieCommitBatchSize,
+
 			CleanCacheSize: cfg.TrieCleanLimit * 1024 * 1024,
 		}
 	}
@@ -455,7 +463,7 @@ func NewBlockChain(db ethdb.Database, chainConfig *params.ChainConfig, genesis *
 	bc.statedb = state.NewDatabase(bc.triedb, nil)
 	bc.validator = NewBlockValidator(chainConfig, bc)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc.hc)
-	bc.processor = NewStateProcessor(chainConfig, bc.hc)
+	bc.processor = NewStateProcessor(bc.hc)
 
 	bc.gcprocRandOffset = bc.generateGcprocRandOffset()
 
@@ -1941,6 +1949,12 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 	bc.pushBlockChange(block)
 
 	bc.chainFeed.Send(ChainEvent{Header: block.Header()})
+	bc.chainFeed.Send(ChainEvent{
+		Header:       block.Header(),
+		Receipts:     receipts,
+		Transactions: block.Transactions(),
+	})
+
 	if len(logs) > 0 {
 		bc.logsFeed.Send(logs)
 	}
@@ -2596,12 +2610,23 @@ func (bc *BlockChain) recoverAncestors(block *types.Block, makeWitness bool) (co
 // collectLogs collects the logs that were generated or removed during the
 // processing of a block. These logs are later announced as deleted or reborn.
 func (bc *BlockChain) collectLogs(b *types.Block, removed bool) []*types.Log {
+	_, logs := bc.collectReceiptsAndLogs(b, removed)
+	return logs
+}
+
+// collectReceiptsAndLogs retrieves receipts from the database and returns both receipts and logs.
+// This avoids duplicate database reads when both are needed.
+func (bc *BlockChain) collectReceiptsAndLogs(b *types.Block, removed bool) ([]*types.Receipt, []*types.Log) {
 	var blobGasPrice *big.Int
 	if b.ExcessBlobGas() != nil {
 		blobGasPrice = eip4844.CalcBlobFee(bc.chainConfig, b.Header())
 	}
 	receipts := rawdb.ReadRawReceipts(bc.db, b.Hash(), b.NumberU64())
-	if err := receipts.DeriveFields(bc.chainConfig, b.Hash(), b.NumberU64(), b.Time(), b.BaseFee(), blobGasPrice, b.Transactions()); err != nil {
+	collectTips := true
+	if bc.chainConfig.IsArbitrum() {
+		collectTips = types.DeserializeHeaderExtraInformation(b.Header()).CollectTips
+	}
+	if err := receipts.DeriveFields(bc.chainConfig, b.Hash(), b.NumberU64(), b.Time(), b.BaseFee(), blobGasPrice, b.Transactions(), collectTips); err != nil {
 		log.Error("Failed to derive block receipts fields", "hash", b.Hash(), "number", b.NumberU64(), "err", err)
 	}
 	var logs []*types.Log
@@ -2613,7 +2638,7 @@ func (bc *BlockChain) collectLogs(b *types.Block, removed bool) []*types.Log {
 			logs = append(logs, log)
 		}
 	}
-	return logs
+	return receipts, logs
 }
 
 // reorg takes two blocks, an old chain and a new chain and will reconstruct the
@@ -2848,8 +2873,14 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 	bc.pushBlockChange(head)
 
 	// Emit events
-	logs := bc.collectLogs(head, false)
-	bc.chainFeed.Send(ChainEvent{Header: head.Header()})
+	receipts, logs := bc.collectReceiptsAndLogs(head, false)
+
+	bc.chainFeed.Send(ChainEvent{
+		Header:       head.Header(),
+		Receipts:     receipts,
+		Transactions: head.Transactions(),
+	})
+
 	if len(logs) > 0 {
 		bc.logsFeed.Send(logs)
 	}

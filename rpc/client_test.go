@@ -289,7 +289,7 @@ func TestClientBatchRequestLimit(t *testing.T) {
 		t.Log("error zero:", batch[0].Error)
 		t.Fatalf("batch elem 0 has wrong error type: %T", batch[0].Error)
 	} else {
-		if err0.ErrorCode() != -32600 || err0.Error() != errMsgBatchTooLarge {
+		if err0.ErrorCode() != -32600 || err0.Error() != ErrMsgBatchTooLarge {
 			t.Fatalf("wrong error on batch elem zero: %v", err0)
 		}
 	}
@@ -973,7 +973,7 @@ func (l *flakeyListener) Accept() (net.Conn, error) {
 
 	c, err := l.Listener.Accept()
 	if err == nil {
-		timeout := time.Duration(rand.Int63n(int64(l.maxKillTimeout)))
+		timeout := max(time.Millisecond*10, time.Duration(rand.Int63n(int64(l.maxKillTimeout))))
 		time.AfterFunc(timeout, func() {
 			log.Debug(fmt.Sprintf("killing conn %v after %v", c.LocalAddr(), timeout))
 			c.Close()

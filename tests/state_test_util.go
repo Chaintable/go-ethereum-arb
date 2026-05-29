@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/arbcrypto"
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -46,7 +47,6 @@ import (
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
-	"golang.org/x/crypto/sha3"
 )
 
 // StateTest checks transaction processing without block context.
@@ -488,7 +488,7 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 }
 
 func rlpHash(x interface{}) (h common.Hash) {
-	hw := sha3.NewLegacyKeccak256()
+	hw := arbcrypto.NewLegacyKeccak256()
 	rlp.Encode(hw, x)
 	hw.Sum(h[:0])
 	return h
@@ -565,3 +565,6 @@ type dummyChain struct {
 func (d *dummyChain) Engine() consensus.Engine                        { return nil }
 func (d *dummyChain) GetHeader(h common.Hash, n uint64) *types.Header { return nil }
 func (d *dummyChain) Config() *params.ChainConfig                     { return d.config }
+func (d *dummyChain) CurrentHeader() *types.Header                    { return nil }
+func (d *dummyChain) GetHeaderByNumber(n uint64) *types.Header        { return nil }
+func (d *dummyChain) GetHeaderByHash(h common.Hash) *types.Header     { return nil }

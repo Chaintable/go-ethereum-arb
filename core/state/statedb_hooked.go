@@ -19,6 +19,7 @@ package state
 import (
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/stateless"
@@ -195,17 +196,18 @@ func (s *hookedStateDB) SetNonce(address common.Address, nonce uint64, reason tr
 
 func (s *hookedStateDB) SetCode(address common.Address, code []byte, reason tracing.CodeChangeReason) []byte {
 	prev := s.inner.SetCode(address, code, reason)
+
 	if s.hooks.OnCodeChangeV2 != nil || s.hooks.OnCodeChange != nil {
-		prevHash := types.EmptyCodeHash
-		if len(prev) != 0 {
-			prevHash = crypto.Keccak256Hash(prev)
-		}
+		prevHash := crypto.Keccak256Hash(prev)
 		codeHash := crypto.Keccak256Hash(code)
 
-		if s.hooks.OnCodeChangeV2 != nil {
-			s.hooks.OnCodeChangeV2(address, prevHash, prev, codeHash, code, reason)
-		} else if s.hooks.OnCodeChange != nil {
-			s.hooks.OnCodeChange(address, prevHash, prev, codeHash, code)
+		// Invoke the hooks only if the contract code is changed
+		if prevHash != codeHash {
+			if s.hooks.OnCodeChangeV2 != nil {
+				s.hooks.OnCodeChangeV2(address, prevHash, prev, codeHash, code, reason)
+			} else if s.hooks.OnCodeChange != nil {
+				s.hooks.OnCodeChange(address, prevHash, prev, codeHash, code)
+			}
 		}
 	}
 	return prev
@@ -323,7 +325,7 @@ func (s *hookedStateDB) RecordEvictWasm(wasm EvictWasm) {
 	s.inner.RecordEvictWasm(wasm)
 }
 
-func (s *hookedStateDB) GetRecentWasms() RecentWasms {
+func (s *hookedStateDB) GetRecentWasms() *RecentWasms {
 	return s.inner.GetRecentWasms()
 }
 
@@ -337,6 +339,10 @@ func (s *hookedStateDB) GetStylusPagesOpen() uint16 {
 
 func (s *hookedStateDB) SetStylusPagesOpen(open uint16) {
 	s.inner.SetStylusPagesOpen(open)
+}
+
+func (s *hookedStateDB) SetStylusPages(open, ever uint16) {
+	s.inner.SetStylusPages(open, ever)
 }
 
 func (s *hookedStateDB) AddStylusPages(new uint16) (uint16, uint16) {
@@ -361,6 +367,18 @@ func (s *hookedStateDB) ClearTxFilter() {
 
 func (s *hookedStateDB) IsTxFiltered() bool {
 	return s.inner.IsTxFiltered()
+}
+
+func (s *hookedStateDB) SetAddressChecker(checker AddressChecker) {
+	s.inner.SetAddressChecker(checker)
+}
+
+func (s *hookedStateDB) TouchAddress(record *filter.FilteredAddressRecord) {
+	s.inner.TouchAddress(record)
+}
+
+func (s *hookedStateDB) IsAddressFiltered() (bool, []filter.FilteredAddressRecord) {
+	return s.inner.IsAddressFiltered()
 }
 
 func (s *hookedStateDB) Recording() bool {

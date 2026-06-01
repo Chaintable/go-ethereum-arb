@@ -315,7 +315,7 @@ func run(ctx context.Context, call *core.Message, opts *Options) (*core.Executio
 
 	// Arbitrum: check address filtering result
 	if txFilterer != nil {
-		if err := txFilterer.CheckFiltered(dirtyState); err != nil {
+		if err := txFilterer.CheckFiltered(dirtyState, call.Tx, opts.Header); err != nil {
 			return nil, err
 		}
 	}

@@ -763,7 +763,7 @@ func (s *StateDB) Copy() *StateDB {
 			everWasmPages:          s.arbExtraData.everWasmPages,
 			arbTxFilter:            s.arbExtraData.arbTxFilter,
 			addressChecker:         s.arbExtraData.addressChecker, // shared reference, checker is stateless
-			addressCheckerState:    nil,                           // will be set in SetTxContext
+			addressCheckerState:    nil,
 		},
 
 		db:                   s.db,

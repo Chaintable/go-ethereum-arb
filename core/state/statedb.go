@@ -222,6 +222,14 @@ func (s *StateDB) SetAddressChecker(checker AddressChecker) {
 	s.arbExtraData.addressChecker = checker
 }
 
+func (s *StateDB) NewTxAddressCheckerState() {
+	if s.arbExtraData.addressChecker != nil {
+		s.arbExtraData.addressCheckerState = s.arbExtraData.addressChecker.NewTxState()
+	} else {
+		s.arbExtraData.addressCheckerState = nil
+	}
+}
+
 func (s *StateDB) TouchAddress(touched *filter.FilteredAddressWithReason) {
 	if s.arbExtraData.addressCheckerState != nil {
 		s.arbExtraData.addressCheckerState.TouchAddress(touched)
@@ -1127,13 +1135,6 @@ func (s *StateDB) SetTxContext(thash common.Hash, ti int) {
 	// Arbitrum: clear memory charging state for new tx
 	s.arbExtraData.openWasmPages = 0
 	s.arbExtraData.everWasmPages = 0
-
-	// Arbitrum: create fresh address checker state for new tx
-	if s.arbExtraData.addressChecker != nil {
-		s.arbExtraData.addressCheckerState = s.arbExtraData.addressChecker.NewTxState()
-	} else {
-		s.arbExtraData.addressCheckerState = nil
-	}
 }
 
 func (s *StateDB) clearJournalAndRefund() {

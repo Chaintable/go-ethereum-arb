@@ -372,7 +372,6 @@ type ArbitrumExtraData struct {
 	recentWasms            RecentWasms
 	arbTxFilter            bool
 
-	addressChecker      AddressChecker // shared, stateless checker factory
 	addressCheckerState AddressCheckerState
 }
 

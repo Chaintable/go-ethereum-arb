@@ -218,16 +218,8 @@ func (s *StateDB) IsTxFiltered() bool {
 	return s.arbExtraData.arbTxFilter
 }
 
-func (s *StateDB) SetAddressChecker(checker AddressChecker) {
-	s.arbExtraData.addressChecker = checker
-}
-
-func (s *StateDB) NewTxAddressCheckerState() {
-	if s.arbExtraData.addressChecker != nil {
-		s.arbExtraData.addressCheckerState = s.arbExtraData.addressChecker.NewTxState()
-	} else {
-		s.arbExtraData.addressCheckerState = nil
-	}
+func (s *StateDB) SetAddressCheckerState(state AddressCheckerState) {
+	s.arbExtraData.addressCheckerState = state
 }
 
 func (s *StateDB) TouchAddress(touched *filter.FilteredAddressWithReason) {
@@ -762,7 +754,6 @@ func (s *StateDB) Copy() *StateDB {
 			openWasmPages:          s.arbExtraData.openWasmPages,
 			everWasmPages:          s.arbExtraData.everWasmPages,
 			arbTxFilter:            s.arbExtraData.arbTxFilter,
-			addressChecker:         s.arbExtraData.addressChecker, // shared reference, checker is stateless
 			addressCheckerState:    nil,
 		},
 

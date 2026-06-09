@@ -19,6 +19,7 @@ const (
 	ReasonEventRule                     FilterReasonType = "event_rule"
 	ReasonContractAddress               FilterReasonType = "contract_address"
 	ReasonContractCaller                FilterReasonType = "contract_caller"
+	ReasonCallTarget                    FilterReasonType = "call_target"
 	ReasonSelfdestructBeneficiary       FilterReasonType = "selfdestruct_beneficiary"
 )
 

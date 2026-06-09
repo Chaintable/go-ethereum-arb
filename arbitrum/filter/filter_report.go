@@ -18,7 +18,7 @@ const (
 	ReasonDealiasedRetryableFeeRefund   FilterReasonType = "dealiased_retryable_fee_refund"
 	ReasonEventRule                     FilterReasonType = "event_rule"
 	ReasonCallTarget                    FilterReasonType = "call_target"
-	ReasonCreateTarget                  FilterReasonType = "create_target"
+	ReasonCreate                        FilterReasonType = "create"
 	ReasonSelfdestructBeneficiary       FilterReasonType = "selfdestruct_beneficiary"
 )
 

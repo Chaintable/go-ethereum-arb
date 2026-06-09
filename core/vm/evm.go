@@ -558,7 +558,7 @@ func (evm *EVM) create(caller common.Address, code []byte, gas uint64, value *ui
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, common.Address{}, gas, multigas.ZeroGas(), ErrDepth
 	}
-	evm.StateDB.TouchAddress(&filter.FilteredAddressWithReason{Address: address, FilterReason: filter.FilterReason{Reason: filter.ReasonCreateTarget, EventRuleMatch: nil}})
+	evm.StateDB.TouchAddress(&filter.FilteredAddressWithReason{Address: address, FilterReason: filter.FilterReason{Reason: filter.ReasonCreate, EventRuleMatch: nil}})
 	if !evm.Context.CanTransfer(evm.StateDB, caller, value) {
 		return nil, common.Address{}, gas, multigas.ZeroGas(), ErrInsufficientBalance
 	}

@@ -288,7 +288,7 @@ func (t *erc7562Tracer) OnTxEnd(receipt *types.Receipt, err error) {
 	if err != nil {
 		return
 	}
-	// Arbitrum system/internal txs can yield a receipt with no top-level EVM frame.
+	// An interrupted trace may leave no top-level frame to finalize.
 	if len(t.callstackWithOpcodes) == 0 {
 		return
 	}

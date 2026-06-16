@@ -239,7 +239,8 @@ func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
 	if err != nil {
 		return
 	}
-	// Arbitrum system/internal txs can yield a receipt with no top-level EVM frame.
+	// Tracing may have been interrupted (e.g. a timeout) before the top-level frame was
+	// captured, leaving nothing to finalize.
 	if len(t.callstack) == 0 {
 		return
 	}

@@ -288,6 +288,10 @@ func (t *erc7562Tracer) OnTxEnd(receipt *types.Receipt, err error) {
 	if err != nil {
 		return
 	}
+	// Arbitrum system/internal txs can yield a receipt with no top-level EVM frame.
+	if len(t.callstackWithOpcodes) == 0 {
+		return
+	}
 	t.callstackWithOpcodes[0].GasUsed = receipt.GasUsed
 	if t.config.WithLog {
 		// Logs are not emitted when the call fails

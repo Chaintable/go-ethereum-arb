@@ -239,6 +239,10 @@ func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
 	if err != nil {
 		return
 	}
+	// Arbitrum system/internal txs can yield a receipt with no top-level EVM frame.
+	if len(t.callstack) == 0 {
+		return
+	}
 	if receipt != nil {
 		t.callstack[0].GasUsed = receipt.GasUsed
 	}

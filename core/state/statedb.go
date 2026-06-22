@@ -877,6 +877,11 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 		// the commit-phase will be a lot faster
 		addressesToPrefetch = append(addressesToPrefetch, addr) // Copy needed for closure
 	}
+
+	// Promote this tx's Stylus warm-start cache to the block level. Finalise runs
+	// only for included txs, so dropped (filtered) txs never reach here.
+	s.arbExtraData.recentWasms.promote()
+
 	if s.prefetcher != nil && len(addressesToPrefetch) > 0 {
 		if err := s.prefetcher.prefetch(common.Hash{}, s.originalRoot, common.Address{}, addressesToPrefetch, nil, false); err != nil {
 			log.Error("Failed to prefetch addresses", "addresses", len(addressesToPrefetch), "err", err)
@@ -1126,6 +1131,8 @@ func (s *StateDB) SetTxContext(thash common.Hash, ti int) {
 	// Arbitrum: clear memory charging state for new tx
 	s.arbExtraData.openWasmPages = 0
 	s.arbExtraData.everWasmPages = 0
+	// Arbitrum: drop the previous tx's Stylus warm-start cache
+	s.arbExtraData.recentWasms.resetTxCache()
 }
 
 func (s *StateDB) clearJournalAndRefund() {

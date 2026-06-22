@@ -483,38 +483,77 @@ func (s *StateDB) GetRecentWasms() *RecentWasms {
 	return &s.arbExtraData.recentWasms
 }
 
-// Type for managing recent program access.
-// The cache contained is discarded at the end of each block.
+// RecentWasms tracks Stylus programs already initialized "recently", so a repeat
+// call within the same block can be charged the discounted cached init cost.
+// The tx/block lifecycle is driven by StateDB: SetTxContext purges txCache at
+// each tx boundary and Finalise promotes it via promote().
 type RecentWasms struct {
-	cache *lru.BasicLRU[common.Hash, struct{}]
+	blockCache *lru.BasicLRU[common.Hash, struct{}] // programs committed by earlier txs in this block
+	txCache    *lru.BasicLRU[common.Hash, struct{}] // programs touched by the in-flight tx
 }
 
-// Creates an un uninitialized cache
+// Creates an uninitialized cache
 func NewRecentWasms() RecentWasms {
-	return RecentWasms{cache: nil}
+	return RecentWasms{blockCache: nil, txCache: nil}
 }
 
-// Inserts a new item, returning true if already present.
-func (p *RecentWasms) Insert(item common.Hash, retain uint16) bool {
-	if p.cache == nil {
+// Insert reports whether codeHash was already warm (in either cache); otherwise
+// it records it in txCache.
+func (p *RecentWasms) Insert(codeHash common.Hash, retain uint16) bool {
+	// Both caches are sized to retain (params.BlockCacheSize); the first Insert of
+	// the block fixes the capacity. promote() sizes blockCache the same way.
+	if p.blockCache == nil {
 		cache := lru.NewBasicLRU[common.Hash, struct{}](int(retain))
-		p.cache = &cache
+		p.blockCache = &cache
 	}
-	if _, hit := p.cache.Get(item); hit {
-		return hit
+	if p.txCache == nil {
+		cache := lru.NewBasicLRU[common.Hash, struct{}](int(retain))
+		p.txCache = &cache
 	}
-	p.cache.Add(item, struct{}{})
+
+	if _, hit := p.blockCache.Get(codeHash); hit {
+		return true
+	}
+	if _, hit := p.txCache.Get(codeHash); hit {
+		return true
+	}
+	p.txCache.Add(codeHash, struct{}{})
 	return false
 }
 
-// Copies all entries into a new LRU.
+// promote moves this tx's warm programs into the block cache. Called from
+// Finalise, so it must tolerate a tx that never touched a Stylus program.
+func (p *RecentWasms) promote() {
+	if p.txCache == nil || p.txCache.Len() == 0 {
+		return
+	}
+	if p.blockCache == nil {
+		cache := lru.NewBasicLRU[common.Hash, struct{}](p.txCache.Capacity())
+		p.blockCache = &cache
+	}
+	for _, codeHash := range p.txCache.Keys() {
+		p.blockCache.Add(codeHash, struct{}{})
+	}
+	p.txCache.Purge()
+}
+
+// resetTxCache drops the in-flight tx's warm programs so a dropped (filtered) tx
+// can't leak warm-start state into the next tx. Called from SetTxContext.
+func (p *RecentWasms) resetTxCache() {
+	if p.txCache != nil {
+		p.txCache.Purge()
+	}
+}
+
+// Copies block-level entries into a new LRU. The in-flight txCache is dropped on
+// purpose: group-rollback checkpoints copy the StateDB before the user tx's Finalise
 func (p RecentWasms) Copy() RecentWasms {
-	if p.cache == nil {
+	if p.blockCache == nil {
 		return NewRecentWasms()
 	}
-	cache := lru.NewBasicLRU[common.Hash, struct{}](p.cache.Capacity())
-	for _, item := range p.cache.Keys() {
+	cache := lru.NewBasicLRU[common.Hash, struct{}](p.blockCache.Capacity())
+	for _, item := range p.blockCache.Keys() {
 		cache.Add(item, struct{}{})
 	}
-	return RecentWasms{cache: &cache}
+	return RecentWasms{blockCache: &cache, txCache: nil}
 }

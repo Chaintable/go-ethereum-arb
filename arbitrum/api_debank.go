@@ -134,18 +134,14 @@ func (api *DebankAPI) DebankBlock(ctx context.Context, blockNrOrHash rpc.BlockNu
 		receipt.SetEffectiveGasPrice(tx, blockCtx.BaseFee, blockCtx.BlockNumber, api.backend.ChainConfig())
 	}
 
-	root, destructs, accounts, storages, codes, err := statedb.StateDiff(api.backend.ChainConfig().IsEIP158(block.Number()))
+	destructs, accounts, storages, codes, err := statedb.StateDiff(api.backend.ChainConfig().IsEIP158(block.Number()))
 	if err != nil {
 		return nil, fmt.Errorf("could not get state diff: %w", err)
 	}
 
-	if root != block.Header().Root {
-		return nil, fmt.Errorf("state root mismatch: expected %x, got %x", block.Header().Root, root)
-	}
-
 	parentRoot := parent.Root()
 
-	res := rpcTracer.GetOutPut(parentRoot, root, destructs, accounts, storages, codes)
+	res := rpcTracer.GetOutPut(parentRoot, block.Header().Root, destructs, accounts, storages, codes)
 
 	return res, nil
 }

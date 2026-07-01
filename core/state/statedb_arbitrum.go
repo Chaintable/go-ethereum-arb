@@ -346,7 +346,9 @@ var ErrArbTxFilter error = errors.New("internal error")
 // Implementations manage their own synchronization (sync, WaitGroup, channels, etc).
 type AddressCheckerState interface {
 	// TouchAddress records an address access and checks if it should be filtered.
-	TouchAddress(record *filter.FilteredAddressRecord)
+	// The checker is responsible for attaching the filter set ID to produce the
+	// final FilteredAddressRecord.
+	TouchAddress(*filter.FilteredAddressWithReason)
 
 	// IsFiltered returns whether any touched address was filtered and the
 	// list of filtered address records collected during the transaction.
@@ -370,8 +372,7 @@ type ArbitrumExtraData struct {
 	recentWasms            RecentWasms
 	arbTxFilter            bool
 
-	addressChecker      AddressChecker      // shared, stateless checker factory
-	addressCheckerState AddressCheckerState // per-tx state, created in SetTxContext
+	addressCheckerState AddressCheckerState
 }
 
 func (s *StateDB) SetArbFinalizer(f func(*ArbitrumExtraData)) {
@@ -482,13 +483,13 @@ func (s *StateDB) GetRecentWasms() *RecentWasms {
 	return &s.arbExtraData.recentWasms
 }
 
-// Type for managing recent program access.
-// The cache contained is discarded at the end of each block.
+// RecentWasms tracks Stylus programs initialized earlier in the current block so a
+// repeat call is charged the cheaper cached init cost. It is reset each block
 type RecentWasms struct {
 	cache *lru.BasicLRU[common.Hash, struct{}]
 }
 
-// Creates an un uninitialized cache
+// Creates an uninitialized cache
 func NewRecentWasms() RecentWasms {
 	return RecentWasms{cache: nil}
 }
@@ -516,4 +517,11 @@ func (p RecentWasms) Copy() RecentWasms {
 		cache.Add(item, struct{}{})
 	}
 	return RecentWasms{cache: &cache}
+}
+
+// RestoreRecentWasms replaces the cache with a clone of r, used by the block
+// processor to undo warmings left by a dropped transaction. The clone keeps the
+// caller's snapshot independent so it can be restored more than once.
+func (s *StateDB) RestoreRecentWasms(r RecentWasms) {
+	s.arbExtraData.recentWasms = r.Copy()
 }

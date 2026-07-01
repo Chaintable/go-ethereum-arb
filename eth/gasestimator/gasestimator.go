@@ -287,9 +287,9 @@ func run(ctx context.Context, call *core.Message, opts *Options) (*core.Executio
 	if txFilterer != nil {
 		txFilterer.Setup(dirtyState)
 
-		dirtyState.TouchAddress(&filter.FilteredAddressRecord{Address: call.From, FilterReason: filter.FilterReason{Reason: filter.ReasonFrom, EventRuleMatch: nil}})
+		dirtyState.TouchAddress(&filter.FilteredAddressWithReason{Address: call.From, FilterReason: filter.FilterReason{Reason: filter.ReasonFrom, EventRuleMatch: nil}})
 		if call.To != nil {
-			dirtyState.TouchAddress(&filter.FilteredAddressRecord{Address: *call.To, FilterReason: filter.FilterReason{Reason: filter.ReasonTo, EventRuleMatch: nil}})
+			dirtyState.TouchAddress(&filter.FilteredAddressWithReason{Address: *call.To, FilterReason: filter.FilterReason{Reason: filter.ReasonTo, EventRuleMatch: nil}})
 		}
 	}
 
@@ -315,7 +315,7 @@ func run(ctx context.Context, call *core.Message, opts *Options) (*core.Executio
 
 	// Arbitrum: check address filtering result
 	if txFilterer != nil {
-		if err := txFilterer.CheckFiltered(dirtyState); err != nil {
+		if err := txFilterer.CheckFiltered(dirtyState, call.Tx, opts.Header); err != nil {
 			return nil, err
 		}
 	}

@@ -3116,47 +3116,59 @@ func (bc *BlockChain) StateSizer() *state.SizeTracker {
 
 // pushBlockChange push block change to kafka, support debank union nodes
 func (bc *BlockChain) pushBlockChange(block *types.Block) {
-	// 先确保 pipeline tracer 不为空，然后再判断是否需要push kafka
+	// Pipeline is optional. When it is disabled, its globals are never initialized,
+	// and block insertion must continue without invoking any pipeline code.
+	manager := leader.GlobalManager
+	pusher := tracer.NodeXPusher
+	if bc.logger == nil || manager == nil || pusher == nil {
+		return
+	}
+	// Backup nodes don't initialize the last pushed block. Check the role before
+	// reading it so pipeline failover state can't affect block insertion.
+	if !manager.IsLeader() {
+		return
+	}
+
 	// 上一个push kafka的block, 必然存在(至少有genesis block)
 	// 上一个push kafka的block比当前的head block还要新，说明有unwind回退，不需要处理, 即使是fork，等有更新的block的时候再一起push
-	isLeader := leader.GlobalManager.IsLeader()
-	leader.GlobalManager.RLock()
-	lastPushedBlock := tracer.NodeXPusher.LastPushedBlock()
-	leader.GlobalManager.RUnlock()
+	manager.RLock()
+	lastPushedBlock := pusher.LastPushedBlock()
+	manager.RUnlock()
+	if lastPushedBlock == nil || lastPushedBlock.BlockNumber > block.NumberU64() {
+		return
+	}
 
-	if tracer.NodeXPusher != nil && isLeader && lastPushedBlock.BlockNumber <= block.NumberU64() {
-		_, dropBlocks, newBlocks := bc.getCommonAncestor(*lastPushedBlock, ptypes.BlockContext{
-			BlockNumber: block.NumberU64(),
-			Hash:        block.Hash(),
-			ParentHash:  block.ParentHash(),
-			Timestamp:   block.Time(),
-		})
-		var blockChange *ptypes.BlockChangeNotification
-		if len(dropBlocks) > 0 {
-			blockChange = &ptypes.BlockChangeNotification{
-				ChangeType: 2,
-				NewBlocks:  newBlocks,
-				DropBlocks: dropBlocks,
-			}
-		} else if len(newBlocks) > 0 {
-			blockChange = &ptypes.BlockChangeNotification{
-				ChangeType: 1,
-				NewBlocks:  newBlocks,
-			}
+	_, dropBlocks, newBlocks := bc.getCommonAncestor(*lastPushedBlock, ptypes.BlockContext{
+		BlockNumber: block.NumberU64(),
+		Hash:        block.Hash(),
+		ParentHash:  block.ParentHash(),
+		Timestamp:   block.Time(),
+	})
+	var blockChange *ptypes.BlockChangeNotification
+	if len(dropBlocks) > 0 {
+		blockChange = &ptypes.BlockChangeNotification{
+			ChangeType: 2,
+			NewBlocks:  newBlocks,
+			DropBlocks: dropBlocks,
 		}
-
-		parent := bc.GetHeaderByHash(block.Header().ParentHash)
-
-		if parent.Root == block.Root() {
-			bc.logger.OnCommit(parent.Root, block.Root(), nil, nil, nil, nil, nil, nil)
+	} else if len(newBlocks) > 0 {
+		blockChange = &ptypes.BlockChangeNotification{
+			ChangeType: 1,
+			NewBlocks:  newBlocks,
 		}
+	}
 
-		if blockChange != nil {
-			err := tracer.NodeXPusher.PushBlockChangeNotification(blockChange)
-			if err != nil {
-				log.Error("SetCanonical PushBlockChangeNotification error", "err", err)
-			}
-			log.Info("NodeXPusher PushBlockChangeNotification", "blockChange", blockChange)
+	parent := bc.GetHeaderByHash(block.Header().ParentHash)
+
+	if parent != nil && parent.Root == block.Root() && bc.logger.OnCommit != nil {
+		bc.logger.OnCommit(parent.Root, block.Root(), nil, nil, nil, nil, nil, nil)
+	}
+
+	if blockChange != nil {
+		err := pusher.PushBlockChangeNotification(blockChange)
+		if err != nil {
+			log.Error("SetCanonical PushBlockChangeNotification error", "err", err)
 		}
+		log.Info("NodeXPusher PushBlockChangeNotification", "blockChange", blockChange)
 	}
 }

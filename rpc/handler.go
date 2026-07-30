@@ -421,12 +421,13 @@ func (id idForLog) String() string {
 
 var (
 	debankMethodMapping = map[string]string{
-		"getAddressNonce":   "debank_getAddressNonce",
-		"getAddressBalance": "debank_getAddressBalance",
-		"getAddressCode":    "debank_getAddressCode",
-		"getStorageAt":      "debank_getStorageAt",
-		"contractMultiCall": "debank_contractMultiCall",
-		"estimateGas":       "debank_estimateGas",
+		"getAddressNonce":      "debank_getAddressNonce",
+		"getAddressBalance":    "debank_getAddressBalance",
+		"getAddressCode":       "debank_getAddressCode",
+		"getStorageAt":         "debank_getStorageAt",
+		"contractMultiCall":    "debank_contractMultiCall",
+		"estimateGas":          "debank_estimateGas",
+		"simulateTransactions": "debank_simulateTransactions",
 	}
 )
 

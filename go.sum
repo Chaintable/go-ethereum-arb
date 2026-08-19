@@ -10,14 +10,8 @@ github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.2.0 h1:gggzg0SUMs6SQbEw+
 github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.2.0/go.mod h1:+6KLcKIVgxoBDMqMO/Nvy7bZ9a0nbU3I1DtFQK3YvB4=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.0.0 h1:OBhqkivkhkMqLPymWEppkm7vgPQY2XsHoEkaMQ0AdZY=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.0.0/go.mod h1:kgDmCTgBzIEPFElEF+FK0SdjAor06dRq2Go927dnQ6o=
-github.com/Chaintable/pipeline v0.0.61-nitro-v3.5.6-2 h1:N62IHz9lbMNmYThnBSvG7js9Geugq9iorWi6/Bab/Lc=
-github.com/Chaintable/pipeline v0.0.61-nitro-v3.5.6-2/go.mod h1:l0GT8LwhbRwaxrLze5FjDv3lHgxxqdf9opAVjJtXNh4=
-github.com/Chaintable/pipeline v0.0.61-nitro-v3.5.6-3 h1:HPCXU2N/9FEFJI3Z3eG7l7/und1ckRyNTHDFA3oiDs4=
-github.com/Chaintable/pipeline v0.0.61-nitro-v3.5.6-3/go.mod h1:l0GT8LwhbRwaxrLze5FjDv3lHgxxqdf9opAVjJtXNh4=
-github.com/Chaintable/pipeline v0.0.62-0.20260812075158-662e97908a25 h1:uyohFxVqNaWnRAm6+xJpxDVY7C1/kyfGTLzb4Y6QmuM=
-github.com/Chaintable/pipeline v0.0.62-0.20260812075158-662e97908a25/go.mod h1:l0GT8LwhbRwaxrLze5FjDv3lHgxxqdf9opAVjJtXNh4=
-github.com/Chaintable/pipeline v0.0.69-0.20260814030410-ff4b85f98f4a h1:O0ZmzoaroDTgh3/Jv+nml1xwSxriyFACPn46NWnwof8=
-github.com/Chaintable/pipeline v0.0.69-0.20260814030410-ff4b85f98f4a/go.mod h1:l0GT8LwhbRwaxrLze5FjDv3lHgxxqdf9opAVjJtXNh4=
+github.com/Chaintable/pipeline v0.0.70-0.20260819101831-8f6af331e97a h1:V8nKazU0GE6NNZyScwzZfL8o+ms/SSDfaAHZQ4PNIX8=
+github.com/Chaintable/pipeline v0.0.70-0.20260819101831-8f6af331e97a/go.mod h1:l0GT8LwhbRwaxrLze5FjDv3lHgxxqdf9opAVjJtXNh4=
 github.com/DataDog/zstd v1.4.5 h1:EndNeuB0l9syBZhut0wns3gV1hL8zX8LIu6ZiVHWLIQ=
 github.com/DataDog/zstd v1.4.5/go.mod h1:1jcaCB/ufaK+sKp1NBhlGmpz41jOoPQ35bpF36t7BBo=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=

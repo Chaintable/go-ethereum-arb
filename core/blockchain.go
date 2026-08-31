@@ -600,7 +600,7 @@ func NewBlockChain(db ethdb.Database, chainConfig *params.ChainConfig, genesis *
 					}
 					log.Info("OnArbGenesisBlock", "number", block.Number)
 					stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff(true)
-					bc.logger.OnArbGenesisBlock(bc.GetBlockByNumber(block.Number.Uint64()), stateDiff)
+					bc.logger.OnArbGenesisBlock(bc.GetBlockByNumber(block.Number.Uint64()), nil, stateDiff)
 				}
 			} else {
 				if block := bc.CurrentBlock(); block.Number.Uint64() == chainConfig.ArbitrumChainParams.GenesisBlockNum {
@@ -609,8 +609,12 @@ func NewBlockChain(db ethdb.Database, chainConfig *params.ChainConfig, genesis *
 						return nil, fmt.Errorf("failed to get genesis state: %w", err)
 					}
 					log.Info("OnArbGenesisBlock", "number", block.Number)
-					stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff(true)
-					bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
+					stateDump, finalState, err := dumpGenesisAllocStrict(stateDb)
+					if err != nil {
+						return nil, fmt.Errorf("failed to dump genesis state: %w", err)
+					}
+					stateDiff := stateDump.ToStorageDiff(true)
+					bc.logger.OnArbGenesisBlock(bc.genesisBlock, finalState, stateDiff)
 				}
 			}
 		}

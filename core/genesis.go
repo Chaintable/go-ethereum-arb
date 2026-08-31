@@ -758,6 +758,35 @@ func decodePrealloc(data string) types.GenesisAlloc {
 }
 
 func dumpGenesisAlloc(stateDb *state.StateDB) *state.Alloc {
+	genesisAlloc, opts := newGenesisAllocDump()
+	stateDb.DumpToCollector(genesisAlloc, opts)
+	return genesisAlloc
+}
+
+func dumpGenesisAllocStrict(stateDb *state.StateDB) (*state.Alloc, types.GenesisAlloc, error) {
+	genesisAlloc, opts := newGenesisAllocDump()
+	if _, err := stateDb.DumpToCollectorStrict(genesisAlloc, opts); err != nil {
+		return nil, nil, err
+	}
+	// Storage remains in genesisAlloc for state diff generation. The hook payload
+	// only carries the account fields needed outside the state diff.
+	finalState := make(types.GenesisAlloc, len(genesisAlloc.Accounts))
+	for _, account := range genesisAlloc.Accounts {
+		balance, err := uint256.FromDecimal(account.Balance)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid balance for account %s: %w", account.Address, err)
+		}
+		finalState[*account.Address] = types.Account{
+			Balance: balance.ToBig(),
+			Code:    common.CopyBytes(account.Code),
+			Nonce:   account.Nonce,
+		}
+	}
+	return genesisAlloc, finalState, nil
+}
+
+func newGenesisAllocDump() (*state.Alloc, *state.DumpConfig) {
+	alloc := &state.Alloc{Accounts: make(map[common.Hash]state.DumpAccount)}
 	opts := &state.DumpConfig{
 		SkipCode:          false,
 		SkipStorage:       false,
@@ -766,9 +795,5 @@ func dumpGenesisAlloc(stateDb *state.StateDB) *state.Alloc {
 		Max:               0,
 		UseStorageKeyHash: true,
 	}
-	genesisAlloc := &state.Alloc{
-		Accounts: make(map[common.Hash]state.DumpAccount),
-	}
-	stateDb.DumpToCollector(genesisAlloc, opts)
-	return genesisAlloc
+	return alloc, opts
 }

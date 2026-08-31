@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
@@ -249,6 +250,49 @@ func TestReadWriteGenesisAlloc(t *testing.T) {
 		if !reflect.DeepEqual(want, account) {
 			t.Fatal("Unexpected account")
 		}
+	}
+}
+
+func TestDumpGenesisAllocStrict(t *testing.T) {
+	addr := common.HexToAddress("0x1234")
+	code := []byte{1, 2, 3}
+	alloc := types.GenesisAlloc{
+		addr: {
+			Balance: big.NewInt(22),
+			Code:    code,
+			Nonce:   3,
+			Storage: map[common.Hash]common.Hash{{1}: {2}},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	config := *triedb.HashDefaults
+	config.Preimages = true
+	trieDB := triedb.NewDatabase(db, &config)
+	root, err := flushAlloc(&alloc, trieDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDB, err := state.New(root, state.NewDatabase(trieDB, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dump, finalState, err := dumpGenesisAllocStrict(stateDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, ok := finalState[addr]
+	if !ok {
+		t.Fatalf("account %s missing from final state", addr)
+	}
+	if account.Balance.Cmp(big.NewInt(22)) != 0 || account.Nonce != 3 || !bytes.Equal(account.Code, code) {
+		t.Fatalf("unexpected final state account %+v", account)
+	}
+	if account.Storage != nil {
+		t.Fatalf("builder-only final state contains storage: %v", account.Storage)
+	}
+	diff := dump.ToStorageDiff(true)
+	if diff.Hash != root || len(diff.NewAccounts) != 1 || len(diff.NewCodes) != 1 || len(diff.StorageDiff) != 1 || len(diff.StorageDiff[0].Values) != 1 {
+		t.Fatalf("unexpected state diff %+v", diff)
 	}
 }
 

@@ -19,6 +19,7 @@ package state
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -26,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
 )
 
@@ -127,6 +129,105 @@ func TestIterativeDump(t *testing.T) {
 `
 	if got != want {
 		t.Errorf("DumpToCollector mismatch:\ngot: %s\nwant: %s\n", got, want)
+	}
+}
+
+func TestDumpToCollectorStrict(t *testing.T) {
+	pathConfig := *pathdb.Defaults
+	pathConfig.NoAsyncFlush = true
+	configs := map[string]*triedb.Config{
+		"hash": {Preimages: true},
+		"path": {Preimages: true, PathDB: &pathConfig},
+	}
+	for name, config := range configs {
+		t.Run(name, func(t *testing.T) {
+			db := rawdb.NewMemoryDatabase()
+			triedb := triedb.NewDatabase(db, config)
+			tdb := NewDatabase(triedb, nil)
+			statedb, err := New(types.EmptyRootHash, tdb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr := common.HexToAddress("0x1234")
+			code := []byte{1, 2, 3}
+			slot := common.HexToHash("0x01")
+			value := common.HexToHash("0x02")
+			statedb.SetBalance(addr, uint256.NewInt(22), 0)
+			statedb.SetNonce(addr, 3, 0)
+			statedb.SetCode(addr, code, 0)
+			statedb.SetState(addr, slot, value)
+			root, err := statedb.Commit(0, false, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			statedb, err = New(root, tdb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			alloc := &Alloc{Accounts: make(map[common.Hash]DumpAccount)}
+			next, err := statedb.DumpToCollectorStrict(alloc, &DumpConfig{UseStorageKeyHash: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if next != nil {
+				t.Fatalf("unexpected continuation key %x", next)
+			}
+			account, ok := alloc.Accounts[crypto.Keccak256Hash(addr.Bytes())]
+			if !ok {
+				t.Fatalf("account %s missing from dump", addr)
+			}
+			if account.Address == nil || *account.Address != addr {
+				t.Fatalf("unexpected account address %v", account.Address)
+			}
+			if account.Balance != "22" || account.Nonce != 3 || !bytes.Equal(account.Code, code) {
+				t.Fatalf("unexpected account dump %+v", account)
+			}
+			if got := account.Storage[crypto.Keccak256Hash(slot.Bytes())]; got != "02" {
+				t.Fatalf("unexpected storage value %q", got)
+			}
+
+			rawdb.WriteCode(db, crypto.Keccak256Hash(code), []byte{9})
+			statedb, err = New(root, NewDatabase(triedb, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			alloc = &Alloc{Accounts: make(map[common.Hash]DumpAccount)}
+			if _, err := statedb.DumpToCollectorStrict(alloc, &DumpConfig{SkipStorage: true}); err == nil || !strings.Contains(err.Error(), "code hash mismatch") {
+				t.Fatalf("unexpected corrupt code error %v", err)
+			}
+		})
+	}
+}
+
+func TestDumpToCollectorStrictMissingAddressPreimage(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	triedb := triedb.NewDatabase(db, &triedb.Config{Preimages: false})
+	tdb := NewDatabase(triedb, nil)
+	statedb, err := New(types.EmptyRootHash, tdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := common.HexToAddress("0x1234")
+	statedb.SetBalance(addr, uint256.NewInt(22), 0)
+	root, err := statedb.Commit(0, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statedb, err = New(root, tdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alloc := &Alloc{Accounts: make(map[common.Hash]DumpAccount)}
+	if _, err := statedb.DumpToCollectorStrict(alloc, nil); err == nil || !strings.Contains(err.Error(), "missing address preimage") {
+		t.Fatalf("unexpected error %v", err)
+	}
+
+	// The legacy API keeps its existing best-effort behavior.
+	alloc = &Alloc{Accounts: make(map[common.Hash]DumpAccount)}
+	statedb.DumpToCollector(alloc, &DumpConfig{SkipStorage: true})
+	account, ok := alloc.Accounts[crypto.Keccak256Hash(addr.Bytes())]
+	if !ok || account.Address != nil {
+		t.Fatalf("unexpected legacy dump account %+v", account)
 	}
 }
 

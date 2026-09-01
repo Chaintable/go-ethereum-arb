@@ -785,6 +785,24 @@ func dumpGenesisAllocStrict(stateDb *state.StateDB) (*state.Alloc, types.Genesis
 	return genesisAlloc, finalState, nil
 }
 
+func emitArbGenesisBlock(logger *tracing.Hooks, block *types.Block, stateDb *state.StateDB, withFinalState bool) error {
+	if withFinalState && logger.OnArbGenesisBlockV2 != nil {
+		stateDump, finalState, err := dumpGenesisAllocStrict(stateDb)
+		if err != nil {
+			return err
+		}
+		logger.OnArbGenesisBlockV2(block, finalState, stateDump.ToStorageDiff(true))
+		return nil
+	}
+	stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff(true)
+	if logger.OnArbGenesisBlockV2 != nil {
+		logger.OnArbGenesisBlockV2(block, nil, stateDiff)
+	} else if logger.OnArbGenesisBlock != nil {
+		logger.OnArbGenesisBlock(block, stateDiff)
+	}
+	return nil
+}
+
 func newGenesisAllocDump() (*state.Alloc, *state.DumpConfig) {
 	alloc := &state.Alloc{Accounts: make(map[common.Hash]state.DumpAccount)}
 	opts := &state.DumpConfig{

@@ -23,11 +23,13 @@ import (
 	"reflect"
 	"testing"
 
+	ptypes "github.com/Chaintable/pipeline/types"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
@@ -294,6 +296,73 @@ func TestDumpGenesisAllocStrict(t *testing.T) {
 	if diff.Hash != root || len(diff.NewAccounts) != 1 || len(diff.NewCodes) != 1 || len(diff.StorageDiff) != 1 || len(diff.StorageDiff[0].Values) != 1 {
 		t.Fatalf("unexpected state diff %+v", diff)
 	}
+}
+
+func TestEmitArbGenesisBlock(t *testing.T) {
+	addr := common.HexToAddress("0x1234")
+	alloc := types.GenesisAlloc{addr: {Balance: big.NewInt(22)}}
+	db := rawdb.NewMemoryDatabase()
+	trieDB := triedb.NewDatabase(db, &triedb.Config{Preimages: false})
+	root, err := flushAlloc(&alloc, trieDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDB, err := state.New(root, state.NewDatabase(trieDB, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1)})
+
+	t.Run("v1 uses best effort dump", func(t *testing.T) {
+		called := false
+		hooks := &tracing.Hooks{
+			OnArbGenesisBlock: func(gotBlock *types.Block, stateDiff *ptypes.BlockStorageDiff) {
+				called = true
+				if gotBlock != block || len(stateDiff.NewAccounts) != 1 {
+					t.Fatalf("unexpected hook payload block=%v diff=%+v", gotBlock, stateDiff)
+				}
+			},
+		}
+		if err := emitArbGenesisBlock(hooks, block, stateDB, true); err != nil {
+			t.Fatal(err)
+		}
+		if !called {
+			t.Fatal("v1 hook was not called")
+		}
+	})
+
+	t.Run("v2 orbit requires address preimages", func(t *testing.T) {
+		called := false
+		hooks := &tracing.Hooks{
+			OnArbGenesisBlockV2: func(*types.Block, types.GenesisAlloc, *ptypes.BlockStorageDiff) {
+				called = true
+			},
+		}
+		if err := emitArbGenesisBlock(hooks, block, stateDB, true); err == nil {
+			t.Fatal("expected strict dump error")
+		}
+		if called {
+			t.Fatal("v2 hook called after strict dump error")
+		}
+	})
+
+	t.Run("v2 arbitrum one remains best effort", func(t *testing.T) {
+		called := false
+		hooks := &tracing.Hooks{
+			OnArbGenesisBlockV2: func(gotBlock *types.Block, finalState types.GenesisAlloc, stateDiff *ptypes.BlockStorageDiff) {
+				called = true
+				if gotBlock != block || finalState != nil || len(stateDiff.NewAccounts) != 1 {
+					t.Fatalf("unexpected hook payload block=%v finalState=%v diff=%+v", gotBlock, finalState, stateDiff)
+				}
+			},
+		}
+		if err := emitArbGenesisBlock(hooks, block, stateDB, false); err != nil {
+			t.Fatal(err)
+		}
+		if !called {
+			t.Fatal("v2 hook was not called")
+		}
+	})
 }
 
 func newDbConfig(scheme string) *triedb.Config {

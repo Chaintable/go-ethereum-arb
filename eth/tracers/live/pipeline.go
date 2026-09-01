@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/Chaintable/pipeline/tracer"
-	ptypes "github.com/Chaintable/pipeline/types"
 	"github.com/ethereum/go-ethereum/core/tracing"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 )
 
@@ -38,11 +36,9 @@ func NewPipelineTracer(cfg json.RawMessage) (*tracing.Hooks, error) {
 		OnCommit:         t.OnCommit,
 	}
 	if t.EnableOrbitGenesisTransactions() {
-		hooks.OnArbGenesisBlockV2 = t.OnArbGenesisBlock
+		hooks.OnArbGenesisBlockV2 = t.OnArbGenesisBlockV2
 	} else {
-		hooks.OnArbGenesisBlock = func(block *types.Block, blockDiff *ptypes.BlockStorageDiff) {
-			t.OnArbGenesisBlock(block, nil, blockDiff)
-		}
+		hooks.OnArbGenesisBlock = t.OnArbGenesisBlock
 	}
 	return hooks, nil
 }

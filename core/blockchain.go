@@ -590,7 +590,7 @@ func NewBlockChain(db ethdb.Database, chainConfig *params.ChainConfig, genesis *
 			}
 		}
 	} else {
-		if bc.logger != nil && bc.logger.OnArbGenesisBlock != nil {
+		if bc.logger != nil && (bc.logger.OnArbGenesisBlock != nil || bc.logger.OnArbGenesisBlockV2 != nil) {
 			// arb mainnet
 			if chainConfig.ChainID.Uint64() == 42161 {
 				if block := bc.CurrentBlock(); block.Number.Uint64() == 22207817 {
@@ -599,8 +599,9 @@ func NewBlockChain(db ethdb.Database, chainConfig *params.ChainConfig, genesis *
 						return nil, fmt.Errorf("failed to get genesis state: %w", err)
 					}
 					log.Info("OnArbGenesisBlock", "number", block.Number)
-					stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff(true)
-					bc.logger.OnArbGenesisBlock(bc.GetBlockByNumber(block.Number.Uint64()), stateDiff)
+					if err := emitArbGenesisBlock(bc.logger, bc.GetBlockByNumber(block.Number.Uint64()), stateDb, false); err != nil {
+						return nil, fmt.Errorf("failed to dump genesis state: %w", err)
+					}
 				}
 			} else {
 				if block := bc.CurrentBlock(); block.Number.Uint64() == chainConfig.ArbitrumChainParams.GenesisBlockNum {
@@ -609,8 +610,9 @@ func NewBlockChain(db ethdb.Database, chainConfig *params.ChainConfig, genesis *
 						return nil, fmt.Errorf("failed to get genesis state: %w", err)
 					}
 					log.Info("OnArbGenesisBlock", "number", block.Number)
-					stateDiff := dumpGenesisAlloc(stateDb).ToStorageDiff(true)
-					bc.logger.OnArbGenesisBlock(bc.genesisBlock, stateDiff)
+					if err := emitArbGenesisBlock(bc.logger, bc.genesisBlock, stateDb, true); err != nil {
+						return nil, fmt.Errorf("failed to dump genesis state: %w", err)
+					}
 				}
 			}
 		}
@@ -3165,7 +3167,7 @@ func (bc *BlockChain) pushBlockChange(block *types.Block) {
 	}
 
 	if blockChange != nil {
-		err := pusher.PushBlockChangeNotification(blockChange)
+		err := pusher.PushBlockChangeNotification(blockChange, nil)
 		if err != nil {
 			log.Error("SetCanonical PushBlockChangeNotification error", "err", err)
 		}

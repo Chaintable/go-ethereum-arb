@@ -121,6 +121,17 @@ func (d iterativeDump) OnRoot(root common.Hash) {
 // The state iterator is still trie-based and can be converted to snapshot-based
 // once the state snapshot is fully integrated into database. TODO(rjl493456442).
 func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []byte) {
+	nextKey, _ = s.dumpToCollector(c, conf, false)
+	return nextKey
+}
+
+// DumpToCollectorStrict is like DumpToCollector, but returns an error instead
+// of producing a partial dump when state data or key preimages are unavailable.
+func (s *StateDB) DumpToCollectorStrict(c DumpCollector, conf *DumpConfig) (nextKey []byte, err error) {
+	return s.dumpToCollector(c, conf, true)
+}
+
+func (s *StateDB) dumpToCollector(c DumpCollector, conf *DumpConfig, strict bool) (nextKey []byte, err error) {
 	// Sanitize the input to allow nil configs
 	if conf == nil {
 		conf = new(DumpConfig)
@@ -136,19 +147,31 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 
 	tr, err := s.db.OpenTrie(s.originalRoot)
 	if err != nil {
-		return nil
+		if strict {
+			return nil, fmt.Errorf("failed to open state trie: %w", err)
+		}
+		return nil, nil
 	}
 	trieIt, err := tr.NodeIterator(conf.Start)
 	if err != nil {
+		if strict {
+			return nil, fmt.Errorf("failed to create state trie iterator: %w", err)
+		}
 		log.Error("Trie dumping error", "err", err)
-		return nil
+		return nil, nil
 	}
 	it := trie.NewIterator(trieIt)
 
 	for it.Next() {
 		var data types.StateAccount
 		if err := rlp.DecodeBytes(it.Value, &data); err != nil {
+			if strict {
+				return nil, fmt.Errorf("failed to decode account %x: %w", it.Key, err)
+			}
 			panic(err)
+		}
+		if strict && data.Balance == nil {
+			return nil, fmt.Errorf("account %x has nil balance", it.Key)
 		}
 		var (
 			account = DumpAccount{
@@ -164,10 +187,21 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		)
 		if addrBytes == nil {
 			missingPreimages++
+			if strict {
+				return nil, fmt.Errorf("missing address preimage for account %x", it.Key)
+			}
 			if conf.OnlyWithAddresses {
 				continue
 			}
 		} else {
+			if strict {
+				if len(addrBytes) != common.AddressLength {
+					return nil, fmt.Errorf("invalid address preimage length %d for account %x", len(addrBytes), it.Key)
+				}
+				if hash := crypto.Keccak256Hash(addrBytes); hash != common.BytesToHash(it.Key) {
+					return nil, fmt.Errorf("address preimage hash mismatch for account %x", it.Key)
+				}
+			}
 			addr = common.BytesToAddress(addrBytes)
 			address = &addr
 			account.Address = address
@@ -175,17 +209,31 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		obj := newObject(s, addr, &data)
 		if !conf.SkipCode {
 			account.Code = obj.Code()
+			if strict {
+				if err := s.Error(); err != nil {
+					return nil, fmt.Errorf("failed to load code for account %s: %w", addr, err)
+				}
+				if hash := crypto.Keccak256Hash(account.Code); hash != common.BytesToHash(data.CodeHash) {
+					return nil, fmt.Errorf("code hash mismatch for account %s: got %s, want %x", addr, hash, data.CodeHash)
+				}
+			}
 		}
 		if !conf.SkipStorage {
 			account.Storage = make(map[common.Hash]string)
 
 			storageTr, err := s.db.OpenStorageTrie(s.originalRoot, addr, obj.Root(), tr)
 			if err != nil {
+				if strict {
+					return nil, fmt.Errorf("failed to load storage trie for account %s: %w", addr, err)
+				}
 				log.Error("Failed to load storage trie", "err", err)
 				continue
 			}
 			trieIt, err := storageTr.NodeIterator(nil)
 			if err != nil {
+				if strict {
+					return nil, fmt.Errorf("failed to create storage trie iterator for account %s: %w", addr, err)
+				}
 				log.Error("Failed to create trie iterator", "err", err)
 				continue
 			}
@@ -193,6 +241,9 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 			for storageIt.Next() {
 				_, content, _, err := rlp.Split(storageIt.Value)
 				if err != nil {
+					if strict {
+						return nil, fmt.Errorf("failed to decode storage value for account %s: %w", addr, err)
+					}
 					log.Error("Failed to decode the value returned by iterator", "error", err)
 					continue
 				}
@@ -201,10 +252,16 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 				} else {
 					key := storageTr.GetKey(storageIt.Key)
 					if key == nil {
+						if strict {
+							return nil, fmt.Errorf("missing storage key preimage for account %s", addr)
+						}
 						continue
 					}
 					account.Storage[common.BytesToHash(key)] = common.Bytes2Hex(content)
 				}
+			}
+			if strict && storageIt.Err != nil {
+				return nil, fmt.Errorf("failed to iterate storage trie for account %s: %w", addr, storageIt.Err)
 			}
 		}
 		c.OnAccount(address, account)
@@ -221,13 +278,16 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 			break
 		}
 	}
+	if strict && it.Err != nil {
+		return nil, fmt.Errorf("failed to iterate state trie: %w", it.Err)
+	}
 	if missingPreimages > 0 {
 		log.Warn("Dump incomplete due to missing preimages", "missing", missingPreimages)
 	}
 	log.Info("Trie dumping complete", "accounts", accounts,
 		"elapsed", common.PrettyDuration(time.Since(start)))
 
-	return nextKey
+	return nextKey, nil
 }
 
 // RawDump returns the state. If the processing is aborted e.g. due to options

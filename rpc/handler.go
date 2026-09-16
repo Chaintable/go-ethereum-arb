@@ -428,6 +428,9 @@ var (
 		"contractMultiCall":    "debank_contractMultiCall",
 		"estimateGas":          "debank_estimateGas",
 		"simulateTransactions": "debank_simulateTransactions",
+		"getBlockByHeight":     "debank_getBlockByHeight",
+		"getBlockById":         "debank_getBlockById",
+		"blockIsValid":         "debank_blockIsValid",
 	}
 )
 

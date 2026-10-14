@@ -533,7 +533,8 @@ func (s *stateObject) adjustDebt(value *uint256.Int) {
 	if new(uint256.Int).Add(value, s.data.Debt).Sign() < 0 {
 		value.Neg(s.data.Debt)
 	}
-	s.data.Fixed.Add(s.data.Fixed, value)
+	// copy-on-write: origin shares these pointers
+	s.data.Fixed = new(uint256.Int).Add(s.data.Fixed, value)
 	if s.data.Flags == types.YieldAutomatic {
 		amount := s.computeShareValue(s.db.GetSharePrice())
 		if amount.Sign() < 0 {
@@ -546,7 +547,7 @@ func (s *stateObject) adjustDebt(value *uint256.Int) {
 			panic("err: underflow detected in fixed")
 		}
 	}
-	s.data.Debt.Add(s.data.Debt, value)
+	s.data.Debt = new(uint256.Int).Add(s.data.Debt, value)
 }
 
 func (s *stateObject) SetFlags(flags uint8, delegate *common.Address) {

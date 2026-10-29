@@ -1,0 +1,155 @@
+package arbitrum
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	ptracer "github.com/Chaintable/pipeline/tracer"
+	ptypes "github.com/Chaintable/pipeline/types"
+	"github.com/Chaintable/pipeline/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/internal/ethapi"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rpc"
+)
+
+type DebankAPI struct {
+	backend *APIBackend
+}
+
+func NewDebankAPI(backend *APIBackend) *DebankAPI {
+	return &DebankAPI{
+		backend: backend,
+	}
+}
+
+func (api *DebankAPI) DebankBlock(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*ptypes.DebankOutPut, error) {
+	block, err := api.backend.BlockByNumberOrHash(ctx, blockNrOrHash)
+	if err != nil {
+		return nil, err
+	}
+	if block.NumberU64() == 0 {
+		// ApeChain: the genesis alloc carries no yield fields, so export the
+		// committed genesis trie as the live tracer does.
+		genesisState, release, err := api.backend.StateAtBlock(ctx, block, 0, nil, true, false)
+		if err != nil {
+			return nil, fmt.Errorf("could not read genesis state: %w", err)
+		}
+		defer release()
+		alloc := &state.Alloc{Accounts: make(map[common.Hash]state.DumpAccount)}
+		if _, err := genesisState.DumpToCollectorStrict(alloc, &state.DumpConfig{UseStorageKeyHash: true}); err != nil {
+			return nil, fmt.Errorf("could not dump genesis state: %w", err)
+		}
+		header := util.BuildPilelineBlockHeader(block)
+		blockDiff := alloc.ToStorageDiff(true)
+		blockDiff.Hash = header.StateRoot
+		blockFile := &ptypes.BlockFile{
+			Block:            util.BuildPipelineBlock(block),
+			Txs:              make([]ptypes.Transaction, 0),
+			Events:           make([]ptypes.Event, 0),
+			Traces:           make([]ptypes.Trace, 0),
+			ErrorEvents:      make([]ptypes.Event, 0),
+			ErrorTraces:      make([]ptypes.Trace, 0),
+			StorageContracts: make([]string, 0),
+		}
+		for _, account := range alloc.Accounts {
+			if len(account.Storage) > 0 && account.Address != nil {
+				blockFile.StorageContracts = append(blockFile.StorageContracts, strings.ToLower(account.Address.Hex()))
+			}
+		}
+		var stateDiffBytes []byte
+		if blockDiff != nil {
+			stateDiffBytes, err = util.EncodeToRlp(blockDiff)
+			if err != nil {
+				log.Error("Failed to encode state diff", "err", err)
+				stateDiffBytes = []byte{}
+			}
+		} else {
+			stateDiffBytes = []byte{}
+		}
+
+		return &ptypes.DebankOutPut{
+			BlockFile:      blockFile,
+			Header:         header,
+			StateDiff:      hexutil.Bytes(stateDiffBytes),
+			ValidationHash: blockFile.Validation().ValidationHash,
+		}, nil
+	}
+	// Prepare base state
+	parent, err := api.backend.BlockByHash(ctx, block.ParentHash())
+	if err != nil {
+		return nil, err
+	}
+	statedb, release, err := api.backend.StateAtBlock(ctx, parent, 128, nil, true, false)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	rpcTracer := ptracer.RPCTracer{}
+	tracer := &tracers.Tracer{
+		Hooks: &tracing.Hooks{
+			OnTxStart: rpcTracer.OnTxStart,
+			OnTxEnd:   rpcTracer.OnTxEnd,
+			OnEnter:   rpcTracer.OnEnter,
+			OnExit:    rpcTracer.OnExit,
+			OnOpcode:  rpcTracer.OnOpcode,
+			OnLog:     rpcTracer.OnLog,
+		},
+		Stop:      rpcTracer.Stop,
+		GetResult: rpcTracer.GetResult,
+	}
+	tracingStateDB := state.NewHookedState(statedb, tracer.Hooks)
+	blockCtx := core.NewEVMBlockContext(block.Header(), ethapi.NewChainContext(ctx, api.backend), nil)
+	evm := vm.NewEVM(blockCtx, tracingStateDB, api.backend.ChainConfig(), vm.Config{Tracer: tracer.Hooks})
+
+	rpcTracer.OnBlockStart(block)
+
+	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
+		core.ProcessBeaconBlockRoot(*beaconRoot, evm)
+	}
+	if !api.backend.ChainConfig().IsArbitrum() && (api.backend.ChainConfig().IsPrague(block.Number(), block.Time(), blockCtx.ArbOSVersion) || api.backend.ChainConfig().IsVerkle(block.Number(), block.Time())) {
+		core.ProcessParentBlockHash(block.ParentHash(), evm)
+	}
+	var (
+		txs     = block.Transactions()
+		signer  = types.MakeSigner(api.backend.ChainConfig(), block.Number(), block.Time(), blockCtx.ArbOSVersion)
+		gp      = new(core.GasPool).AddGas(block.GasLimit())
+		usedGas = new(uint64)
+	)
+
+	runCtx := core.NewMessageReplayContext()
+	for i, tx := range txs {
+		msg, err := core.TransactionToMessage(tx, signer, blockCtx.BaseFee, runCtx)
+		if err != nil {
+			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+		}
+		statedb.SetTxContext(tx.Hash(), i)
+
+		receipt, _, err := core.ApplyTransactionWithEVM(msg, gp, statedb, block.Number(), block.Hash(), block.Time(), tx, usedGas, evm, nil)
+		if err != nil {
+			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+		}
+
+		receipt.SetEffectiveGasPrice(tx, blockCtx.BaseFee, blockCtx.BlockNumber, api.backend.ChainConfig())
+	}
+
+	destructs, accounts, storages, codes, err := statedb.StateDiff(api.backend.ChainConfig().IsEIP158(block.Number()))
+	if err != nil {
+		return nil, fmt.Errorf("could not get state diff: %w", err)
+	}
+
+	parentRoot := parent.Root()
+
+	res := rpcTracer.GetOutPut(parentRoot, block.Header().Root, destructs, accounts, storages, codes)
+
+	return res, nil
+}

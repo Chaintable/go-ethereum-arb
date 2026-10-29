@@ -27,6 +27,10 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+
+	ptypes "github.com/Chaintable/pipeline/types"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/holiman/uint256"
 )
 
 // DumpConfig is a set of options to control what portions of the state will be
@@ -37,6 +41,7 @@ type DumpConfig struct {
 	OnlyWithAddresses bool
 	Start             []byte
 	Max               uint64
+	UseStorageKeyHash bool
 }
 
 // DumpCollector interface which the state trie calls during iteration
@@ -49,6 +54,7 @@ type DumpCollector interface {
 
 // DumpAccount represents an account in the state.
 type DumpAccount struct {
+	Balance     string                 `json:"balance"` // resolved from the yield fields and the share price
 	Flags       uint8                  `json:"flags"`
 	Fixed       string                 `json:"fixed"`
 	Shares      string                 `json:"shares"`
@@ -95,6 +101,7 @@ type iterativeDump struct {
 // OnAccount implements DumpCollector interface
 func (d iterativeDump) OnAccount(addr *common.Address, account DumpAccount) {
 	dumpAccount := &DumpAccount{
+		Balance:     account.Balance,
 		Flags:       account.Flags,
 		Fixed:       account.Fixed,
 		Shares:      account.Shares,
@@ -124,6 +131,17 @@ func (d iterativeDump) OnRoot(root common.Hash) {
 // The state iterator is still trie-based and can be converted to snapshot-based
 // once the state snapshot is fully integrated into database. TODO(rjl493456442).
 func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []byte) {
+	nextKey, _ = s.dumpToCollector(c, conf, false)
+	return nextKey
+}
+
+// DumpToCollectorStrict is like DumpToCollector, but returns an error instead
+// of producing a partial dump when state data or key preimages are unavailable.
+func (s *StateDB) DumpToCollectorStrict(c DumpCollector, conf *DumpConfig) (nextKey []byte, err error) {
+	return s.dumpToCollector(c, conf, true)
+}
+
+func (s *StateDB) dumpToCollector(c DumpCollector, conf *DumpConfig, strict bool) (nextKey []byte, err error) {
 	// Sanitize the input to allow nil configs
 	if conf == nil {
 		conf = new(DumpConfig)
@@ -139,19 +157,31 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 
 	tr, err := s.db.OpenTrie(s.originalRoot)
 	if err != nil {
-		return nil
+		if strict {
+			return nil, fmt.Errorf("failed to open state trie: %w", err)
+		}
+		return nil, nil
 	}
 	trieIt, err := tr.NodeIterator(conf.Start)
 	if err != nil {
+		if strict {
+			return nil, fmt.Errorf("failed to create state trie iterator: %w", err)
+		}
 		log.Error("Trie dumping error", "err", err)
-		return nil
+		return nil, nil
 	}
 	it := trie.NewIterator(trieIt)
 
 	for it.Next() {
 		var data types.StateAccount
 		if err := rlp.DecodeBytes(it.Value, &data); err != nil {
+			if strict {
+				return nil, fmt.Errorf("failed to decode account %x: %w", it.Key, err)
+			}
 			panic(err)
+		}
+		if strict && (data.Fixed == nil || data.Shares == nil || data.Debt == nil) {
+			return nil, fmt.Errorf("account %x has nil yield fields", it.Key)
 		}
 		var (
 			account = DumpAccount{
@@ -171,28 +201,59 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		)
 		if addrBytes == nil {
 			missingPreimages++
+			if strict {
+				return nil, fmt.Errorf("missing address preimage for account %x", it.Key)
+			}
 			if conf.OnlyWithAddresses {
 				continue
 			}
 		} else {
+			if strict {
+				if len(addrBytes) != common.AddressLength {
+					return nil, fmt.Errorf("invalid address preimage length %d for account %x", len(addrBytes), it.Key)
+				}
+				if hash := crypto.Keccak256Hash(addrBytes); hash != common.BytesToHash(it.Key) {
+					return nil, fmt.Errorf("address preimage hash mismatch for account %x", it.Key)
+				}
+			}
 			addr = common.BytesToAddress(addrBytes)
 			address = &addr
 			account.Address = address
 		}
 		obj := newObject(s, addr, &data)
+		account.Balance = obj.Balance().String()
+		if strict {
+			if err := s.Error(); err != nil {
+				return nil, fmt.Errorf("failed to read share price for account %s: %w", addr, err)
+			}
+		}
 		if !conf.SkipCode {
 			account.Code = obj.Code()
+			if strict {
+				if err := s.Error(); err != nil {
+					return nil, fmt.Errorf("failed to load code for account %s: %w", addr, err)
+				}
+				if hash := crypto.Keccak256Hash(account.Code); hash != common.BytesToHash(data.CodeHash) {
+					return nil, fmt.Errorf("code hash mismatch for account %s: got %s, want %x", addr, hash, data.CodeHash)
+				}
+			}
 		}
 		if !conf.SkipStorage {
 			account.Storage = make(map[common.Hash]string)
 
 			storageTr, err := s.db.OpenStorageTrie(s.originalRoot, addr, obj.Root(), tr)
 			if err != nil {
+				if strict {
+					return nil, fmt.Errorf("failed to load storage trie for account %s: %w", addr, err)
+				}
 				log.Error("Failed to load storage trie", "err", err)
 				continue
 			}
 			trieIt, err := storageTr.NodeIterator(nil)
 			if err != nil {
+				if strict {
+					return nil, fmt.Errorf("failed to create storage trie iterator for account %s: %w", addr, err)
+				}
 				log.Error("Failed to create trie iterator", "err", err)
 				continue
 			}
@@ -200,14 +261,27 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 			for storageIt.Next() {
 				_, content, _, err := rlp.Split(storageIt.Value)
 				if err != nil {
+					if strict {
+						return nil, fmt.Errorf("failed to decode storage value for account %s: %w", addr, err)
+					}
 					log.Error("Failed to decode the value returned by iterator", "error", err)
 					continue
 				}
-				key := storageTr.GetKey(storageIt.Key)
-				if key == nil {
-					continue
+				if conf.UseStorageKeyHash {
+					account.Storage[common.BytesToHash(storageIt.Key)] = common.Bytes2Hex(content)
+				} else {
+					key := storageTr.GetKey(storageIt.Key)
+					if key == nil {
+						if strict {
+							return nil, fmt.Errorf("missing storage key preimage for account %s", addr)
+						}
+						continue
+					}
+					account.Storage[common.BytesToHash(key)] = common.Bytes2Hex(content)
 				}
-				account.Storage[common.BytesToHash(key)] = common.Bytes2Hex(content)
+			}
+			if strict && storageIt.Err != nil {
+				return nil, fmt.Errorf("failed to iterate storage trie for account %s: %w", addr, storageIt.Err)
 			}
 		}
 		c.OnAccount(address, account)
@@ -224,13 +298,16 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 			break
 		}
 	}
+	if strict && it.Err != nil {
+		return nil, fmt.Errorf("failed to iterate state trie: %w", it.Err)
+	}
 	if missingPreimages > 0 {
 		log.Warn("Dump incomplete due to missing preimages", "missing", missingPreimages)
 	}
 	log.Info("Trie dumping complete", "accounts", accounts,
 		"elapsed", common.PrettyDuration(time.Since(start)))
 
-	return nextKey
+	return nextKey, nil
 }
 
 // RawDump returns the state. If the processing is aborted e.g. due to options
@@ -256,4 +333,75 @@ func (s *StateDB) Dump(opts *DumpConfig) []byte {
 // IterativeDump dumps out accounts as json-objects, delimited by linebreaks on stdout
 func (s *StateDB) IterativeDump(opts *DumpConfig, output *json.Encoder) {
 	s.DumpToCollector(iterativeDump{output}, opts)
+}
+
+type Alloc struct {
+	Root     common.Hash
+	Accounts map[common.Hash]DumpAccount
+}
+
+func (a *Alloc) OnRoot(root common.Hash) {
+	a.Root = root
+}
+func (a *Alloc) OnAccount(addr *common.Address, account DumpAccount) {
+	if addr == nil {
+		a.Accounts[common.BytesToHash(account.AddressHash)] = account
+	} else {
+		a.Accounts[crypto.Keccak256Hash(addr.Bytes())] = account
+	}
+}
+
+func (a *Alloc) ToStorageDiff(UseStorageKeyHash bool) *ptypes.BlockStorageDiff {
+	diff := &ptypes.BlockStorageDiff{
+		Hash:            a.Root,
+		ParentHash:      types.EmptyRootHash,
+		NewAccounts:     make([]ptypes.NewAccount, 0),
+		DeletedAccounts: make([]common.Hash, 0),
+		StorageDiff:     make([]ptypes.AccountStorageDiff, 0),
+		NewCodes:        make([]ptypes.NewCode, 0),
+	}
+	var yieldChanges []ptypes.ApeYieldChange
+	for addrHash, acc := range a.Accounts {
+		yield, err := ptypes.ParseApeYield(acc.Flags, acc.Fixed, acc.Shares, acc.Debt, acc.Delegate)
+		if err != nil {
+			panic(fmt.Errorf("account %x: %w", addrHash, err))
+		}
+		// A full state export: every slot starts at zero.
+		yieldChanges = append(yieldChanges, ptypes.ApeYieldChange{AddrHash: addrHash, Pre: &ptypes.ApeYieldAccount{}, Post: &yield})
+		diff.NewAccounts = append(diff.NewAccounts, ptypes.NewAccount{
+			Address:  addrHash,
+			Balance:  new(uint256.Int), // ApeChain: the balance lives in the yield slots
+			Nonce:    acc.Nonce,
+			CodeHash: crypto.HashData(crypto.NewKeccakState(), acc.Code),
+		})
+		if len(acc.Code) > 0 {
+			diff.NewCodes = append(diff.NewCodes, ptypes.NewCode{
+				CodeHash: crypto.HashData(crypto.NewKeccakState(), acc.Code),
+				Code:     acc.Code,
+			})
+		}
+		values := make([]ptypes.IndexValuePair, 0)
+		for index, storageValue := range acc.Storage {
+			v := common.HexToHash(storageValue)
+			value := uint256.NewInt(0).SetBytes(v.Bytes())
+			var hashedIndex common.Hash
+			if UseStorageKeyHash {
+				hashedIndex = common.BytesToHash(index[:])
+			} else {
+				hashedIndex = crypto.Keccak256Hash(index[:])
+			}
+			values = append(values, ptypes.IndexValuePair{
+				Index: hashedIndex,
+				Value: value,
+			})
+		}
+		diff.StorageDiff = append(diff.StorageDiff, ptypes.AccountStorageDiff{
+			Address: addrHash,
+			Values:  values,
+		})
+	}
+	if yieldDiff := ptypes.ApeYieldStorageDiff(yieldChanges); yieldDiff != nil {
+		diff.StorageDiff = append(diff.StorageDiff, *yieldDiff)
+	}
+	return diff
 }

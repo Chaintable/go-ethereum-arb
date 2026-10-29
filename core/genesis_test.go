@@ -23,15 +23,20 @@ import (
 	"reflect"
 	"testing"
 
+	ptypes "github.com/Chaintable/pipeline/types"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
+	"github.com/holiman/uint256"
 )
 
 func TestSetupGenesis(t *testing.T) {
@@ -250,6 +255,141 @@ func TestReadWriteGenesisAlloc(t *testing.T) {
 			t.Fatal("Unexpected account")
 		}
 	}
+}
+
+func TestDumpGenesisAllocStrict(t *testing.T) {
+	addr := common.HexToAddress("0x1234")
+	code := []byte{1, 2, 3}
+	db := rawdb.NewMemoryDatabase()
+	config := *triedb.HashDefaults
+	config.Preimages = true
+	trieDB := triedb.NewDatabase(db, &config)
+	stateDB, err := state.New(types.EmptyRootHash, state.NewDatabase(trieDB, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ApeChain: an automatic-yield balance needs the ArbOS share price, which
+	// this state does not have, so hold the balance as fixed.
+	stateDB.SetFlags(addr, types.YieldDisabled, nil)
+	stateDB.AddBalance(addr, uint256.NewInt(22), tracing.BalanceIncreaseGenesisBalance)
+	stateDB.SetCode(addr, code, tracing.CodeChangeGenesis)
+	stateDB.SetNonce(addr, 3, tracing.NonceChangeGenesis)
+	stateDB.SetState(addr, common.Hash{1}, common.Hash{2})
+	root, err := stateDB.Commit(0, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := trieDB.Commit(root, true); err != nil {
+		t.Fatal(err)
+	}
+	stateDB, err = state.New(root, state.NewDatabase(trieDB, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dump, finalState, err := dumpGenesisAllocStrict(stateDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, ok := finalState[addr]
+	if !ok {
+		t.Fatalf("account %s missing from final state", addr)
+	}
+	if account.Balance.Cmp(big.NewInt(22)) != 0 || account.Nonce != 3 || !bytes.Equal(account.Code, code) {
+		t.Fatalf("unexpected final state account %+v", account)
+	}
+	if account.Storage != nil {
+		t.Fatalf("builder-only final state contains storage: %v", account.Storage)
+	}
+	diff := dump.ToStorageDiff(true)
+	if diff.Hash != root || len(diff.NewAccounts) != 1 || len(diff.NewCodes) != 1 || len(diff.StorageDiff) != 2 {
+		t.Fatalf("unexpected state diff %+v", diff)
+	}
+	if !diff.NewAccounts[0].Balance.IsZero() {
+		t.Fatalf("state diff balance %s, want 0", diff.NewAccounts[0].Balance)
+	}
+	addrHash := crypto.Keccak256Hash(addr.Bytes())
+	for _, storage := range diff.StorageDiff {
+		switch storage.Address {
+		case addrHash:
+			if len(storage.Values) != 1 {
+				t.Fatalf("unexpected account storage %+v", storage)
+			}
+		case ptypes.ApeYieldAddressHash:
+			// flags (disabled) and fixed (22); shares and debt are zero.
+			if len(storage.Values) != 2 {
+				t.Fatalf("unexpected yield storage %+v", storage)
+			}
+		default:
+			t.Fatalf("unexpected storage account %x", storage.Address)
+		}
+	}
+}
+
+func TestEmitArbGenesisBlock(t *testing.T) {
+	addr := common.HexToAddress("0x1234")
+	alloc := types.GenesisAlloc{addr: {Balance: big.NewInt(22)}}
+	db := rawdb.NewMemoryDatabase()
+	trieDB := triedb.NewDatabase(db, &triedb.Config{Preimages: false})
+	root, err := flushAlloc(&alloc, trieDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDB, err := state.New(root, state.NewDatabase(trieDB, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1)})
+
+	t.Run("v1 uses best effort dump", func(t *testing.T) {
+		called := false
+		hooks := &tracing.Hooks{
+			OnArbGenesisBlock: func(gotBlock *types.Block, stateDiff *ptypes.BlockStorageDiff) {
+				called = true
+				if gotBlock != block || len(stateDiff.NewAccounts) != 1 {
+					t.Fatalf("unexpected hook payload block=%v diff=%+v", gotBlock, stateDiff)
+				}
+			},
+		}
+		if err := emitArbGenesisBlock(hooks, block, stateDB, true); err != nil {
+			t.Fatal(err)
+		}
+		if !called {
+			t.Fatal("v1 hook was not called")
+		}
+	})
+
+	t.Run("v2 orbit requires address preimages", func(t *testing.T) {
+		called := false
+		hooks := &tracing.Hooks{
+			OnArbGenesisBlockV2: func(*types.Block, types.GenesisAlloc, *ptypes.BlockStorageDiff) {
+				called = true
+			},
+		}
+		if err := emitArbGenesisBlock(hooks, block, stateDB, true); err == nil {
+			t.Fatal("expected strict dump error")
+		}
+		if called {
+			t.Fatal("v2 hook called after strict dump error")
+		}
+	})
+
+	t.Run("v2 arbitrum one remains best effort", func(t *testing.T) {
+		called := false
+		hooks := &tracing.Hooks{
+			OnArbGenesisBlockV2: func(gotBlock *types.Block, finalState types.GenesisAlloc, stateDiff *ptypes.BlockStorageDiff) {
+				called = true
+				if gotBlock != block || finalState != nil || len(stateDiff.NewAccounts) != 1 {
+					t.Fatalf("unexpected hook payload block=%v finalState=%v diff=%+v", gotBlock, finalState, stateDiff)
+				}
+			},
+		}
+		if err := emitArbGenesisBlock(hooks, block, stateDB, false); err != nil {
+			t.Fatal(err)
+		}
+		if !called {
+			t.Fatal("v2 hook was not called")
+		}
+	})
 }
 
 func newDbConfig(scheme string) *triedb.Config {

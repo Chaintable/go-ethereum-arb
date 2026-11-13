@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.2.0
-	github.com/Chaintable/pipeline v0.0.70-nitro-v3.5.6-5
+	github.com/Chaintable/pipeline v0.0.70-nitro-v3.5.6-5.0.20261113075041-f3ae8c8bd85d
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/VictoriaMetrics/fastcache v1.13.0
 	github.com/aws/aws-sdk-go-v2 v1.32.5

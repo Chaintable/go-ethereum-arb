@@ -57,9 +57,7 @@ import (
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 
-	"github.com/Chaintable/pipeline/leader"
 	"github.com/Chaintable/pipeline/tracer"
-	ptypes "github.com/Chaintable/pipeline/types"
 )
 
 var (
@@ -1699,64 +1697,6 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	return 0, nil
 }
 
-// 返回两个块的共同祖先，以及两个块的从共同祖先到两个块的路径,即drop和new
-func (bc *BlockChain) getCommonAncestor(blocka ptypes.BlockContext, blockb ptypes.BlockContext) (ptypes.BlockContext, []ptypes.BlockContext, []ptypes.BlockContext) {
-	var (
-		chainA, chainB []ptypes.BlockContext
-	)
-	if blockb.ParentHash == blocka.Hash {
-		return blocka, chainA, []ptypes.BlockContext{blockb}
-	}
-	for blockb.BlockNumber > blocka.BlockNumber {
-		chainB = append(chainB, blockb)
-		headerb := bc.GetHeaderByHash(blockb.ParentHash)
-		if headerb == nil {
-			log.Crit("Failed to get header by hash", "hash", blockb.ParentHash)
-		} else {
-			blockb = ptypes.BlockContext{
-				BlockNumber: headerb.Number.Uint64(),
-				Hash:        headerb.Hash(),
-				ParentHash:  headerb.ParentHash,
-				Timestamp:   headerb.Time,
-			}
-		}
-	}
-	for blocka.Hash != blockb.Hash {
-		chainA = append(chainA, blocka)
-		headera := bc.GetHeaderByHash(blocka.ParentHash)
-		if headera == nil {
-			log.Crit("Failed to get header by hash", "hash", blocka.ParentHash)
-		} else {
-			blocka = ptypes.BlockContext{
-				BlockNumber: headera.Number.Uint64(),
-				Hash:        headera.Hash(),
-				ParentHash:  headera.ParentHash,
-				Timestamp:   headera.Time,
-			}
-		}
-
-		chainB = append(chainB, blockb)
-		headerb := bc.GetHeaderByHash(blockb.ParentHash)
-		if headerb == nil {
-			log.Crit("Failed to get header by hash", "hash", blockb.ParentHash)
-		} else {
-			blockb = ptypes.BlockContext{
-				BlockNumber: headerb.Number.Uint64(),
-				Hash:        headerb.Hash(),
-				ParentHash:  headerb.ParentHash,
-				Timestamp:   headerb.Time,
-			}
-		}
-	}
-	// now blocka == blockb == ancestor
-
-	// reverse chainA
-	slices.Reverse(chainA)
-	// reverse chainB
-	slices.Reverse(chainB)
-	return blocka, chainA, chainB
-}
-
 // writeBlockWithoutState writes only the block and its metadata to the database,
 // but does not write any state. This is used to construct competing side forks
 // up to the point where they exceed the canonical total difficulty.
@@ -3089,57 +3029,26 @@ func (bc *BlockChain) StateSizer() *state.SizeTracker {
 func (bc *BlockChain) pushBlockChange(block *types.Block) {
 	// Pipeline is optional. When it is disabled, its globals are never initialized,
 	// and block insertion must continue without invoking any pipeline code.
-	manager := leader.GlobalManager
 	pusher := tracer.NodeXPusher
-	if bc.logger == nil || manager == nil || pusher == nil {
+	if bc.logger == nil || pusher == nil {
 		return
-	}
-	// Backup nodes don't initialize the last pushed block. Check the role before
-	// reading it so pipeline failover state can't affect block insertion.
-	if !manager.IsLeader() {
-		return
-	}
-
-	// 上一个push kafka的block, 必然存在(至少有genesis block)
-	// 上一个push kafka的block比当前的head block还要新，说明有unwind回退，不需要处理, 即使是fork，等有更新的block的时候再一起push
-	manager.RLock()
-	lastPushedBlock := pusher.LastPushedBlock()
-	manager.RUnlock()
-	if lastPushedBlock == nil || lastPushedBlock.BlockNumber > block.NumberU64() {
-		return
-	}
-
-	_, dropBlocks, newBlocks := bc.getCommonAncestor(*lastPushedBlock, ptypes.BlockContext{
-		BlockNumber: block.NumberU64(),
-		Hash:        block.Hash(),
-		ParentHash:  block.ParentHash(),
-		Timestamp:   block.Time(),
-	})
-	var blockChange *ptypes.BlockChangeNotification
-	if len(dropBlocks) > 0 {
-		blockChange = &ptypes.BlockChangeNotification{
-			ChangeType: 2,
-			NewBlocks:  newBlocks,
-			DropBlocks: dropBlocks,
-		}
-	} else if len(newBlocks) > 0 {
-		blockChange = &ptypes.BlockChangeNotification{
-			ChangeType: 1,
-			NewBlocks:  newBlocks,
-		}
 	}
 
 	parent := bc.GetHeaderByHash(block.Header().ParentHash)
-
 	if parent != nil && parent.Root == block.Root() && bc.logger.OnCommit != nil {
 		bc.logger.OnCommit(parent.Root, block.Root(), nil, nil, nil, nil, nil, nil)
 	}
 
-	if blockChange != nil {
-		err := pusher.PushBlockChangeNotification(blockChange, nil)
-		if err != nil {
-			log.Error("SetCanonical PushBlockChangeNotification error", "err", err)
-		}
-		log.Info("NodeXPusher PushBlockChangeNotification", "blockChange", blockChange)
+	// Pipeline owns the leader check, getCommonAncestor computation, and Kafka write gate.
+	// Backup nodes return immediately without any computation.
+	if err := pusher.NotifyBlockCommit(block, pipelineHeaderReader{bc}, nil); err != nil {
+		log.Error("NotifyBlockCommit error", "err", err)
 	}
+}
+
+// pipelineHeaderReader adapts BlockChain to the pipeline BlockChainReader interface.
+type pipelineHeaderReader struct{ bc *BlockChain }
+
+func (r pipelineHeaderReader) GetHeaderByHash2(hash common.Hash) *types.Header {
+	return r.bc.GetHeaderByHash(hash)
 }
